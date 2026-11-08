@@ -60,6 +60,17 @@ namespace SP2GunRing
         }
     }
 
+    // 单人模式下网络伤害链路可能整条不存在，这里挂 AircraftScript 自己的受伤入口
+    [HarmonyPatch(typeof(AircraftScript), "OnDamaged")]
+    static class LocalDamagedProbe
+    {
+        [HarmonyPostfix]
+        static void Postfix(AircraftScript __instance)
+        {
+            GunRingPlugin.OnLocalDamage2(__instance);
+        }
+    }
+
     [HarmonyPatch(typeof(NetworkAircraftScript), "DamagePart")]
     static class HitProbe
     {
@@ -70,7 +81,18 @@ namespace SP2GunRing
         }
     }
 
-    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.5.0")]
+    // 本地（非联网）载具的受伤入口：AI 机被打中不会走 Network* 那几条
+    [HarmonyPatch(typeof(AircraftScript), "AircraftDamaged")]
+    static class LocalDamageProbe
+    {
+        [HarmonyPostfix]
+        static void Postfix(AircraftScript __instance)
+        {
+            GunRingPlugin.OnLocalDamage(__instance);
+        }
+    }
+
+    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.7.0")]
     public class GunRingPlugin : BaseUnityPlugin
     {
         // Gravy Mod Menu 会扫每个插件的静态字符串字段 GravyMenuTab，
@@ -98,6 +120,8 @@ namespace SP2GunRing
         static ConfigEntry<int> CClampR, CClampG, CClampB;
         static ConfigEntry<int> CAlpha;
         static ConfigEntry<bool> CGunCross;
+        static ConfigEntry<bool> CRingFollowsSpread;
+        static ConfigEntry<int> CSpreadScale;
         static ConfigEntry<bool> COnlySelected;
 
 
@@ -106,6 +130,8 @@ namespace SP2GunRing
         static ConfigEntry<bool> CHitSound;
         static ConfigEntry<float> CHitVolume;
         static ConfigEntry<int> CHitMarkerPx;
+        static ConfigEntry<string> CHitText;
+        static ConfigEntry<bool> CDebugLog;
 
         bool _on = true;
         internal static GunRingPlugin Instance;
@@ -117,6 +143,8 @@ namespace SP2GunRing
         static int _hitProbeCount;
 
         static int _anyDamageCount;
+        static int _localDmgCount;
+        static int _localDmg2Count;
 
         internal static void OnAnyDamage(NetworkFlightObjectDamageReceiverScript recv, float amount, string via)
         {
@@ -131,8 +159,7 @@ namespace SP2GunRing
                           " self=" + (ac == p._craft) + " selected=" + (p._target != null ? p._target.Name : "null"));
             }
             if (ac == null || ac == p._craft) return;
-            if (p._target != null && p._target.Player != null && p._target.Player.Aircraft == ac)
-                MarkHit(ac.name);
+            HitIfTarget(p, ac);
         }
 
         internal static void OnBulletHit(NetworkFlightObjectDamageReceiverScript recv, float damage)
@@ -146,8 +173,58 @@ namespace SP2GunRing
                 _hitProbeCount++;
                 L.LogInfo("[GunRing] bulletHit#" + _hitProbeCount + " on " + ac.name + " dmg=" + damage.ToString("0.0") + " selected=" + (p._target != null ? p._target.Name : "null"));
             }
-            if (p._target != null && p._target.Player != null && p._target.Player.Aircraft == ac)
-                MarkHit(ac.name);
+            HitIfTarget(p, ac);
+        }
+
+        // 统一的「这一发是不是打在锁定目标上」判定：
+        // 网络玩家按 Player.Aircraft 精确匹配；本地 AI 没有 Player，按位置距离兜底
+        internal static bool HitIfTarget(GunRingPlugin p, AircraftScript ac)
+        {
+            if (p == null || ac == null || ac == p._craft) return false;
+            if (p._target == null) return false;
+            try
+            {
+                if (p._target.Player != null && p._target.Player.Aircraft == ac) { MarkHit(ac.name); return true; }
+            }
+            catch { }
+            Vector3 bodyPos = ac.transform.position;
+            try { if (ac.Bodies != null && ac.Bodies.Count > 0) bodyPos = ac.Bodies[0].transform.position; } catch { }
+            if (Vector3.Distance(p._target.Position, bodyPos) <= 60f) { MarkHit(ac.name); return true; }
+            return false;
+        }
+
+        internal static void OnLocalDamage2(AircraftScript ac)
+        {
+            GunRingPlugin p = Instance;
+            if (p == null || ac == null) return;
+            if (ac == p._craft) return;
+            Vector3 bodyPos = ac.transform.position;
+            try { if (ac.Bodies != null && ac.Bodies.Count > 0) bodyPos = ac.Bodies[0].transform.position; } catch { }
+            float d = p._target != null ? Vector3.Distance(p._target.Position, bodyPos) : -1f;
+            if (_localDmg2Count < 8)
+            {
+                _localDmg2Count++;
+                L.LogInfo("[GunRing] onDamaged aircraft=" + ac.name + " distToTarget=" + d.ToString("0.0")
+                    + " selected=" + (p._target != null ? p._target.Name : "null"));
+            }
+            HitIfTarget(p, ac);
+        }
+
+        internal static void OnLocalDamage(AircraftScript ac)
+        {
+            GunRingPlugin p = Instance;
+            if (p == null || ac == null || ac == p._craft) return;
+            if (p._target == null) return;
+            Vector3 bodyPos = ac.transform.position;
+            try { if (ac.Bodies != null && ac.Bodies.Count > 0) bodyPos = ac.Bodies[0].transform.position; } catch { }
+            float d = Vector3.Distance(p._target.Position, bodyPos);
+            if (_localDmgCount < 6)
+            {
+                _localDmgCount++;
+                L.LogInfo("[GunRing] localDmg on " + ac.name + " distToTarget=" + d.ToString("0.0") + " selected=" + p._target.Name);
+            }
+            if (d > 60f) return;   // 不是当前锁定那架
+            MarkHit(ac.name);
         }
 
         internal static void OnDamage(NetworkAircraftScript n)
@@ -162,13 +239,13 @@ namespace SP2GunRing
                 GunRingPlugin.L.LogInfo("[GunRing] DamagePart#" + _dmgCalls + " aircraft=" + ac.name + " self=" + (ac == p._craft) + " selected=" + (p._target != null ? p._target.Name : "null"));
             }
             if (ac == p._craft) return;
-            if (p._target != null && p._target.Player != null && p._target.Player.Aircraft == ac)
-                MarkHit(ac.name);
+            HitIfTarget(p, ac);
         }
         static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
         float _nextScan;
         AircraftScript _craft;
         float _bulletSpeed = -1f;
+        float _spread;
         string _gunName = "";
         Target _target;
         AircraftScript _fallback;
@@ -248,6 +325,7 @@ namespace SP2GunRing
         }
         Vector3 _lead;
         float _angleToLead;
+        static float _dbgNext;
 
         void Awake()
         {
@@ -262,7 +340,7 @@ namespace SP2GunRing
             CStyle = Config.Bind("Visual", "Style", 0, new ConfigDescription("0=六条线 1=四条线 2=虚线圈 3=实心圆 / reticle style", new AcceptableValueRange<int>(0, 3)));
             CDebugDraw = Config.Bind("Visual", "DebugDraw", true, "画出目标位置(蓝)与数值，排错用 / draw target marker + numbers");
             CModeInt = Config.Bind("Visual", "Mode", 0, new ConfigDescription("0=环钉在准心旁 1=环画在提前量点(额外显示机炮指向准心) / ring placement mode", new AcceptableValueRange<int>(0, 1)));
-            CMaxOffsetPx = Config.Bind("Visual", "MaxOffsetPx", 70, "Pinned 模式下环离准心最远的像素距离，0=不限 / max pixel offset from crosshair");
+            CMaxOffsetPx = Config.Bind("Visual", "MaxOffsetPx", 0, "Pinned 模式下环离准心最远的像素距离，0=不限（默认不限，避免环被吸在固定半径上）/ max pixel offset from crosshair, 0 = unlimited");
             CShowLine = Config.Bind("Visual", "ShowLine", true, "从准心到环画一条连线 / draw connector line");
             CIdleR = Config.Bind("Color", "IdleR", 255, "未对准颜色 R (0-255) / idle red");
             CIdleG = Config.Bind("Color", "IdleG", 255, "未对准颜色 G / idle green");
@@ -275,11 +353,15 @@ namespace SP2GunRing
             CClampB = Config.Bind("Color", "ClampedB", 51, "超限颜色 B / clamped blue");
             CAlpha = Config.Bind("Color", "Alpha", 240, "整体不透明度 0-255 / alpha");
             CGunCross = Config.Bind("Visual", "ShowGunCross", true, "Lead 模式下额外画一个准心显示当前机炮指向 / draw gun-direction cross in Lead mode");
+            CRingFollowsSpread = Config.Bind("Visual", "RingFollowsSpread", true, "环大小随机炮散布自动放大(散布/初速) / scale ring with gun dispersion");
+            CSpreadScale = Config.Bind("Visual", "SpreadScale", 100, new ConfigDescription("散布环缩放百分比 50-400 / dispersion ring scale %", new AcceptableValueRange<int>(50, 400)));
             CGreenAngle = Config.Bind("Visual", "GreenAngle", 2.5f, "变绿条件：机头与提前量点夹角≤该角度(度) / turn green when aim error <= this many degrees");
             COnlySelected = Config.Bind("General", "OnlyWhenSelected", true, "只在你自己锁定/选中目标时显示，没锁就不画 / only draw when you have a locked target");
             CHitMarker = Config.Bind("Hit", "HitMarker", true, "命中时在屏幕中间画叉 / draw hit marker on hit");
             CHitMarkerMs = Config.Bind("Hit", "HitMarkerMs", 180, "命中标记显示时长(毫秒) / hit marker duration in ms");
-            CHitMarkerPx = Config.Bind("Hit", "HitMarkerPx", 26, "命中叉的大小(像素) / hit marker size in px");
+            CHitMarkerPx = Config.Bind("Hit", "HitMarkerPx", 26, "命中标记线段长度(像素) / hit marker arm length in px");
+            CDebugLog = Config.Bind("Menu", "DebugLog", false, "写调试日志（环位置/目标血量/伤害），平时关掉 / verbose debug logging");
+            CHitText = Config.Bind("Hit", "HitText", "HIT", "命中时上方显示的文字，留空则不显示 / text shown above hit marker, empty = hide");
             CHitSound = Config.Bind("Hit", "HitSound", true, "命中时播放 hit.wav / play hit.wav on hit");
             CHitVolume = Config.Bind("Hit", "HitVolume", 0.8f, "命中音音量 / hit sound volume");
             CEnabled.SettingChanged += (s, e) => { _on = CEnabled.Value; L.LogInfo("[GunRing] " + (_on ? "on" : "off") + " (menu)"); };
@@ -462,6 +544,54 @@ namespace SP2GunRing
             }
             if (_craft == null || !HasTarget) return;
             SolveLead();
+            WatchTargetDamage();
+        }
+
+        // 直接盯锁定目标的机体血量：只要它在掉，就说明我们打中了。
+        // 单人模式下网络伤害回调整条不存在，这条是唯一可靠的判据。
+        AircraftScript _watched;
+        float _watchedDmg;
+        float _nextWatch;
+
+        void WatchTargetDamage()
+        {
+            if (_target == null) { _watched = null; return; }
+            if (_watched == null || Time.unscaledTime >= _nextWatch)
+            {
+                _nextWatch = Time.unscaledTime + 0.5f;
+                AircraftScript found = null;
+                float best = 120f;
+                try
+                {
+                    AircraftScript[] all = UnityEngine.Object.FindObjectsOfType<AircraftScript>();
+                    Vector3 tp = TargetPos;
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        AircraftScript a = all[i];
+                        if (a == null || a == _craft) continue;
+                        Vector3 ap = a.transform.position;
+                        try { if (a.Bodies != null && a.Bodies.Count > 0) ap = a.Bodies[0].transform.position; } catch { }
+                        float d = Vector3.Distance(ap, tp);
+                        if (d < best) { best = d; found = a; }
+                    }
+                }
+                catch { }
+                _watched = found;
+                if (_watched != null)
+                {
+                    _watchedDmg = _watched.Damage;
+                    if (CDebugLog.Value) L.LogInfo("[GunRing] watch target=" + _watched.name + " dist=" + best.ToString("0") + " dmg=" + _watchedDmg.ToString("0.00"));
+                }
+            }
+            if (_watched == null) return;
+            float now = _watched.Damage;
+            if (now > _watchedDmg + 0.0001f)
+            {
+                if (CDebugLog.Value) L.LogInfo("[GunRing] damage rise " + _watchedDmg.ToString("0.00") + " -> " + now.ToString("0.00"));
+                _watchedDmg = now;
+                MarkHit(_watched.name);
+            }
+            else if (now < _watchedDmg) _watchedDmg = now;
         }
 
         static FlightSceneScript Scene()
@@ -517,7 +647,7 @@ namespace SP2GunRing
             if (_selectedSource != "off") _selectedSource = _target != null ? "player" : "";
             if (_target != null) _aimingOff = false;
             Camera viewCam = ViewCam();
-            Vector3 aimFwd = viewCam != null ? viewCam.transform.forward : _craft.transform.forward;
+            Vector3 aimFwd = viewCam != null ? viewCam.transform.forward : CraftXform().forward;
             _scanDetail = "";
             if (_target == null && sc != null && sc.TargetRegistry != null && _craft != null)
             {
@@ -528,11 +658,11 @@ namespace SP2GunRing
                     Target t = list[i];
                     if (t == null || t.IsDead) continue;
                     if (t.Player != null && t.Player.Aircraft == _craft) continue; // skip self
-                    Vector3 d = t.Position - _craft.transform.position;
+                    Vector3 d = t.Position - CraftPos();
                     float dist = d.magnitude;
                     if (dist < 20f || dist > CMaxRange.Value) continue;
                     float angCam = Vector3.Angle(aimFwd, d);
-                    float angNose = Vector3.Angle(_craft.transform.forward, d);
+                    float angNose = Vector3.Angle(CraftXform().forward, d);
                     _scanDetail += "  " + t.Name + " d=" + dist.ToString("0") + " angCam=" + angCam.ToString("0") + " angNose=" + angNose.ToString("0") + " t=" + t.TeamId + ";";
                     // 不再硬性踢掉视角外的目标：取"离准星最近"的那个，同队加惩罚
                     float score = angCam + (t.TeamId == _craft.TeamId ? 25f : 0f) + (angCam > CMaxAngle.Value ? 8f : 0f);
@@ -547,13 +677,13 @@ namespace SP2GunRing
             {
                 _fallback = null;
                 float best = float.MaxValue;
-                Vector3 fwd = _craft.transform.forward;
+                Vector3 fwd = CraftXform().forward;
                 var all = Resources.FindObjectsOfTypeAll<AircraftScript>();
                 for (int i = 0; i < all.Length; i++)
                 {
                     AircraftScript other = all[i];
                     if (other == null || other == _craft) continue;
-                    Vector3 d = other.transform.position - _craft.transform.position;
+                    Vector3 d = other.transform.position - CraftPos();
                     float dist = d.magnitude;
                     if (dist < 20f || dist > CMaxRange.Value) continue;
                     float ang = Vector3.Angle(fwd, d);
@@ -567,7 +697,7 @@ namespace SP2GunRing
 
         void PickGun()
         {
-            _bulletSpeed = -1f; _gunName = ""; _gun = null; _muzzleT = null;
+            _bulletSpeed = -1f; _gunName = ""; _gun = null; _muzzleT = null; _spread = 0f;
             if (_craft == null || _craft.GunManager == null) return;
             try
             {
@@ -584,9 +714,41 @@ namespace SP2GunRing
                     _gun = g as Component;
                     _gunName = g.GetType().Name;
                     _muzzleT = MuzzleOf(g);
+                    _spread = SpreadOf(g);
                 }
             }
             catch (Exception e) { L.LogWarning("[GunRing] gun scan: " + e.Message); }
+        }
+
+        // 子弹生成时 velocity 里含 Random.insideUnitSphere * Spread，所以散布是"速度单位"
+        static float SpreadOf(object g)
+        {
+            try
+            {
+                Type t = g.GetType();
+                PropertyInfo p = t.GetProperty("Spread", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) return Convert.ToSingle(p.GetValue(g, null));
+                FieldInfo f = t.GetField("Spread", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null) return Convert.ToSingle(f.GetValue(g));
+                PropertyInfo gp = t.GetProperty("Gun");
+                if (gp != null)
+                {
+                    object data = gp.GetValue(g, null);
+                    if (data != null)
+                    {
+                        Type dt = data.GetType();
+                        PropertyInfo sp = dt.GetProperty("Spread", BindingFlags.Public | BindingFlags.Instance);
+                        if (sp != null) return Convert.ToSingle(sp.GetValue(data, null));
+                        FieldInfo sfd = dt.GetField("Spread", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (sfd != null) return Convert.ToSingle(sfd.GetValue(data));
+                        foreach (MemberInfo mi in dt.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                            if (mi.Name.IndexOf("pread", StringComparison.OrdinalIgnoreCase) >= 0)
+                                L.LogInfo("[GunRing] spread-ish member: " + dt.Name + "." + mi.Name + " (" + mi.MemberType + ")");
+                    }
+                }
+            }
+            catch (Exception e) { L.LogWarning("[GunRing] spread: " + e.Message); }
+            return 0f;
         }
 
         // RotatingGunScript exposes BulletSpeed; fixed GunScript exposes Gun.MuzzleVelocity
@@ -630,6 +792,13 @@ namespace SP2GunRing
         {
             try
             {
+                // AircraftScript.Velocity 才是整机速度；Bodies[0] 可能是轮子/局部刚体
+                Vector3 cv = _craft.Velocity;
+                if (cv.sqrMagnitude > 0.1f) return cv;
+            }
+            catch { }
+            try
+            {
                 PropertyInfo bp = typeof(AircraftScript).GetProperty("Bodies");
                 if (bp != null)
                 {
@@ -649,11 +818,27 @@ namespace SP2GunRing
             return Vector3.zero;
         }
 
+        // craft.transform 在 SP2 里经常是过期值，优先用机体朝向节点
+        Transform CraftXform()
+        {
+            try
+            {
+                if (_craft.OrientedCenterOfMassRigidBodies != null) return _craft.OrientedCenterOfMassRigidBodies;
+            }
+            catch { }
+            return _craft.transform;
+        }
+
+        Vector3 CraftPos()
+        {
+            return CraftXform().position;
+        }
+
         Vector3 MuzzlePos()
         {
             if (_muzzleT != null) return _muzzleT.position;
             if (_gun != null) return _gun.transform.position;
-            return _craft.transform.position;
+            return CraftPos();
         }
 
         static AudioClip _hitClip;
@@ -754,7 +939,7 @@ namespace SP2GunRing
             catch { }
             if (_muzzleT != null) return _muzzleT.forward;
             if (_gun != null) return _gun.transform.forward;
-            return _craft.transform.forward;
+            return CraftXform().forward;
         }
 
         Vector3 AimDir()
@@ -832,15 +1017,30 @@ namespace SP2GunRing
                 if (chS.z > 0f)
                 {
                     chx = chS.x; chy = Screen.height - chS.y;
-                    // 环 = 准心 + (敌机 - 提前量点)：等价于"对准时敌机会出现在哪"。
-                    // 把环压在敌机身上时，机头正好在提前量点上 -> 与 green 判定(angleToLead<=2.5)完全一致
-                    Vector3 tS = cam.WorldToScreenPoint(TargetPos);
-                    if (tS.z > 0f)
+                    // 环 = 准心 + (敌机屏幕位置 − 提前量点屏幕位置)：
+                    // 这就是「把机头拉到提前量点后，敌机会挪到哪」，一阶近似、稳定、任何视角都不会爆
+                    Vector3 spT = cam.WorldToScreenPoint(TargetPos);
+                    Vector3 spL = cam.WorldToScreenPoint(_lead);
+                    if (spT.z > 0f && spL.z > 0f)
                     {
-                        float tgx = tS.x, tgy = Screen.height - tS.y;
-                        x = chx + (tgx - x);
-                        y = chy + (tgy - y);
+                        float tgx = spT.x, tgy = Screen.height - spT.y;
+                        float ldx = spL.x, ldy = Screen.height - spL.y;
+                        x = chx + (tgx - ldx);
+                        y = chy + (tgy - ldy);
+                        if (CDebugLog.Value && Time.unscaledTime >= _dbgNext)
+                        {
+                            _dbgNext = Time.unscaledTime + 1f;
+                            L.LogInfo("[GunRing] dbg ch=" + chx.ToString("0") + "," + chy.ToString("0")
+                                + " ring=" + x.ToString("0") + "," + y.ToString("0")
+                                + " tgt=" + tgx.ToString("0") + "," + tgy.ToString("0")
+                                + " lead=" + ldx.ToString("0") + "," + ldy.ToString("0")
+                                + " d=" + Vector3.Distance(CraftPos(), TargetPos).ToString("0")
+                                + " leadOff=" + Vector3.Distance(_lead, TargetPos).ToString("0")
+                                + " ang=" + _angleToLead.ToString("0.0")
+                                + " gunFwd=" + AimDir().ToString() + " camFwd=" + cam.transform.forward.ToString());
+                        }
                     }
+                    else { x = chx; y = chy; }
                     float dx = x - chx, dy = y - chy;
                     float len = Mathf.Sqrt(dx * dx + dy * dy);
                     float maxLen = CMaxOffsetPx.Value > 0 ? CMaxOffsetPx.Value : 1e6f;
@@ -862,8 +1062,16 @@ namespace SP2GunRing
                 }
             }
 
-            float dist = Vector3.Distance(_craft.transform.position, TargetPos);
+            float dist = Vector3.Distance(CraftPos(), TargetPos);
             float radius = CRingPx.Value + Mathf.Clamp(1200f / Mathf.Max(50f, dist), 0f, 12f);
+            // 散布：子弹从炮口散开半角 atan(Spread / MuzzleVelocity)，屏幕半径 = 半角 * 每弧度像素
+            if (CRingFollowsSpread.Value && _spread > 0.0001f && _bulletSpeed > 10f)
+            {
+                float halfRad = Mathf.Atan2(_spread, _bulletSpeed);
+                float pxPerRad = (Screen.height * 0.5f) / Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+                float spreadPx = halfRad * pxPerRad * (CSpreadScale.Value / 100f);
+                radius = Mathf.Max(radius, Mathf.Min(spreadPx, 400f));
+            }
             bool good = _angleToLead <= CGreenAngle.Value;
             int px = Mathf.RoundToInt(radius * 2f);
 
@@ -874,22 +1082,37 @@ namespace SP2GunRing
             GUI.DrawTexture(new Rect(x - radius, y - radius, px, px), Reticle(StyleName(), px));
             GUI.color = old;
 
-            // 命中反馈：屏幕中心画叉
+            // 命中反馈：4 条短线围一个空心 X（中间不交错，像 FPS 的 hitmarker）+ 上方 Hit 字样
             if (CHitMarker.Value && Time.unscaledTime < _hitUntil)
             {
+                // 准心在画面里就画在准心上；机炮指向偏出画面时退回画在环上，别让反馈飞到屏幕外
                 float hx = _chScrX, hy = _chScrY;
+                if (hx < 0f || hy < 0f || hx > Screen.width || hy > Screen.height) { hx = x; hy = y; }
                 if (hx <= 0f && hy <= 0f) { hx = Screen.width * 0.5f; hy = Screen.height * 0.5f; }
-                float hp = Mathf.Max(8f, CHitMarkerPx.Value);
+                float hp = Mathf.Max(6f, CHitMarkerPx.Value);   // 线段长度
+                float gap = Mathf.Max(3f, hp * 0.45f);          // 中间空隙
                 float th = 2.5f;
                 GUI.color = Rgb(CReadyR, CReadyG, CReadyB);
-                Matrix4x4 mm = GUI.matrix;
-                GUIUtility.RotateAroundPivot(45f, new Vector2(hx, hy));
-                GUI.DrawTexture(new Rect(hx - hp, hy - th * 0.5f, hp * 2f, th), Texture2D.whiteTexture);
-                GUI.matrix = mm;
-                Matrix4x4 mm2 = GUI.matrix;
-                GUIUtility.RotateAroundPivot(-45f, new Vector2(hx, hy));
-                GUI.DrawTexture(new Rect(hx - hp, hy - th * 0.5f, hp * 2f, th), Texture2D.whiteTexture);
-                GUI.matrix = mm2;
+                for (int i = 0; i < 4; i++)
+                {
+                    float ang = 45f + i * 90f;
+                    float rad = ang * Mathf.Deg2Rad;
+                    Vector2 dir = new Vector2(Mathf.Cos(rad), -Mathf.Sin(rad));   // GUI 的 y 向下
+                    Vector2 p0 = new Vector2(hx, hy) + dir * gap;
+                    Matrix4x4 mmx = GUI.matrix;
+                    GUIUtility.RotateAroundPivot(-ang, p0);
+                    GUI.DrawTexture(new Rect(p0.x, p0.y - th * 0.5f, hp, th), Texture2D.whiteTexture);
+                    GUI.matrix = mmx;
+                }
+                if (CHitText.Value != null && CHitText.Value.Length > 0)
+                {
+                    GUIStyle hs = new GUIStyle(GUI.skin.label);
+                    hs.fontSize = 13;
+                    hs.fontStyle = FontStyle.Bold;
+                    hs.alignment = TextAnchor.MiddleCenter;
+                    hs.normal.textColor = Rgb(CReadyR, CReadyG, CReadyB);
+                    GUI.Label(new Rect(hx - 60f, hy - gap - hp - 20f, 120f, 18f), CHitText.Value, hs);
+                }
                 GUI.color = old;
             }
 
@@ -987,7 +1210,7 @@ namespace SP2GunRing
                     Target t = tl[i];
                     if (t == null) continue;
                     L.LogInfo("[GunRing]   target[" + i + "] " + t.Name + " team=" + t.TeamId + " dead=" + t.IsDead +
-                              " d=" + (_craft != null ? Vector3.Distance(_craft.transform.position, t.Position).ToString("0") : "?") +
+                              " d=" + (_craft != null ? Vector3.Distance(CraftPos(), t.Position).ToString("0") : "?") +
                               " vel=" + t.Velocity.magnitude.ToString("0"));
                 }
             }
@@ -1011,11 +1234,11 @@ namespace SP2GunRing
             if (_craft != null)
             {
                 Vector3 ov = OwnVelocity();
-                L.LogInfo("[GunRing] ownVel=" + ov + " fwd=" + _craft.transform.forward + " angOwnFwd=" + Vector3.Angle(ov, _craft.transform.forward).ToString("0.0"));
+                L.LogInfo("[GunRing] ownVel=" + ov + " fwd=" + CraftXform().forward + " angOwnFwd=" + Vector3.Angle(ov, CraftXform().forward).ToString("0.0"));
             }
             L.LogInfo("[GunRing] craft=" + (_craft != null ? _craft.name : "null") +
-                      " gun=" + _gunName + " speed=" + _bulletSpeed.ToString("0") +
-                      " target=" + (_target != null ? _target.Name + " d=" + Vector3.Distance(_craft.transform.position, _target.Position).ToString("0") : "null") +
+                      " gun=" + _gunName + " speed=" + _bulletSpeed.ToString("0") + " spread=" + _spread.ToString("0.00") +
+                      " target=" + (_target != null ? _target.Name + " d=" + Vector3.Distance(CraftPos(), _target.Position).ToString("0") : "null") +
                       " angleToLead=" + _angleToLead.ToString("0.0"));
         }
     }
