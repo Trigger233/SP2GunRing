@@ -113,9 +113,11 @@ Requires only `csc.exe` from the .NET Framework (ships with Windows).
 ## 已知限制 / Known limitations
 
 - 命中反馈依赖「目标血量上涨」判定，需要先锁定目标；环的计算与服务器无关
+- 炮弹预测环只对 `CannonScript` 火炮生效；普通机枪弹（BulletPool）在 SP2 里是直线、无重力
 - 只处理机枪（bullet）与 `CannonScript` 炮弹；导弹/炸弹/火箭不处理
 - 炮弹按理想抛体（只受重力、无空气阻力）解算；若弹丸 prefab 自带 drag 会有小误差
 - Hit detection watches the locked target's damage value, so a locked target is required
+- The cannon ring only works for `CannonScript` cannons; regular BulletPool rounds are straight-line and gravity-free in SP2
 - Guns (bullets) and `CannonScript` cannon projectiles only; no missiles, bombs or rockets
 - Cannon solution assumes ideal projectile motion (gravity only, no drag); projectile prefab drag would add a small error
 
