@@ -1,7 +1,7 @@
 # SP2 Gun Lead Ring / SP2 机炮提前量环
 
-SimplePlanes 2 的机炮提前量指示插件（BepInEx / Harmony）。
-A gun lead indicator mod for SimplePlanes 2 (BepInEx / Harmony).
+SimplePlanes 2 的机炮提前量 + 炮弹弹道预测指示插件（BepInEx / Harmony）。
+A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / Harmony).
 
 ![styles](images/preview_styles.png)
 
@@ -10,6 +10,7 @@ A gun lead indicator mod for SimplePlanes 2 (BepInEx / Harmony).
 - 自动读取机上初速最快的机枪，按真实弹道方向（`PartScript.transform.forward`）计算提前量
 - 锁定目标后，在准心旁边显示提前量环；把环压在敌机上即代表机头已对准提前量，开火即可命中
 - 环的颜色随状态变化：未对准 / 可开火 / 提前量超限
+- **炮弹预测环（v0.8.0 新增）**：自动找机上初速最快的 `CannonScript` 火炮，按理想抛体运动（只受重力、无空气阻力）解算刚体弹丸；锁定目标时同时计算目标提前量与重力下坠，环=把机头拉到所需弹道方向后目标会出现在的位置；没锁目标时按固定距离显示当前炮弹落点，并用虚线画出抛物线弹道
 - 命中反馈：四段短线围成空心 X（FPS 式）+ 上方 HIT 字样 + hit.wav 音效，文字可自定义
 - 命中判定同时覆盖网络玩家与本地 AI 机（单人模式也可用）
 - 四种准心样式、颜色、尺寸、搜索范围全部可配
@@ -19,6 +20,7 @@ A gun lead indicator mod for SimplePlanes 2 (BepInEx / Harmony).
 - Reads the fastest muzzle velocity gun on your craft and solves the lead using the real bullet direction
 - Draws a lead ring next to the crosshair; putting the ring on the target means your nose is on the lead point
 - Colour states: not aligned / ready to fire / offset clamped
+- **Cannon ballistic ring (new in v0.8.0)**: finds the fastest `CannonScript` cannon and solves its rigidbody projectile as ideal projectile motion (gravity only, no drag). With a locked target it adds both target lead and gravity drop; the ring marks where the target will appear once the nose is pulled onto the required ballistic direction. Without a target it draws the predicted impact point at a fixed range plus a dotted parabolic trail
 - Hit feedback: FPS-style X made of four non-crossing segments, a configurable HIT label above it and hit.wav
 - Works for both networked players and local AI aircraft (single-player included)
 - 4 reticle styles, colours, size, search range all configurable
@@ -28,9 +30,9 @@ A gun lead indicator mod for SimplePlanes 2 (BepInEx / Harmony).
 ## 安装 / Install
 
 1. 游戏自带 BepInEx 5.4.x，无需另装 / The game ships with BepInEx, nothing else to install
-2. 下载 `bin/SP2GunRing-v0.7.0.zip`，解压到游戏根目录合并覆盖：
+2. 下载 `bin/SP2GunRing-v0.8.0.zip`，解压到游戏根目录合并覆盖：
    `...\steamapps\common\SimplePlanes 2\`
-   Download `bin/SP2GunRing-v0.5.0.zip` and extract it into the game root folder
+   Download `bin/SP2GunRing-v0.8.0.zip` and extract it into the game root folder
 3. 启动游戏，进入飞行场景即可 / Launch the game and enter a flight scene
 
 ## 用法 / Usage
@@ -46,6 +48,16 @@ Lock a target and a ring appears near the crosshair:
 - idle colour (white) – not aligned yet
 - ready colour (green) – nose is on the lead point, fire now
 - clamped colour (orange) – required lead exceeds `MaxOffsetPx`, get closer or turn in
+
+炮弹预测环（v0.8.0）：
+- 机上装了 Cannon 火炮时，自动出现天蓝色预测环和虚线弹道
+- 锁定目标时：环 = 把机头拉到所需弹道方向后目标会出现的位置；把目标压在环上、环变绿时开火即可命中（已含目标提前量与重力下坠）
+- 未锁定目标时：环 = 当前炮口方向在 `Range` 距离上的炮弹落点，虚线是理想抛物线
+
+Cannon ballistic ring (v0.8.0):
+- Appears automatically when the craft carries Cannon parts (cyan ring + dotted trail)
+- With a locked target: the ring marks where the target will appear once the nose is on the required ballistic direction; put the target on the ring and fire when it turns green (target lead + gravity drop included)
+- Without a target: the ring is the impact point of the current barrel direction at `Range`; the dotted line is the ideal parabola
 
 ## 配置 / Configuration
 
@@ -70,6 +82,14 @@ Lock a target and a ring appears near the crosshair:
 | | `DebugDraw` | 1/0 调试标记与数值 |
 | Color | `IdleR/G/B`、`ReadyR/G/B`、`ClampedR/G/B` | 三态颜色，各 0-255 |
 | | `Alpha` | 不透明度 0-255 |
+| Cannon | `CannonRing` | 1/0 炮弹预测环开关（默认开） |
+| | `UseTargetRange` | 1/0 锁定目标时按目标距离解算；0=用固定 `Range` |
+| | `Range` | 没有锁定目标时的预测距离（米，默认 1500） |
+| | `RingRadiusPx` | 炮弹环半径（像素，默认 16） |
+| | `R/G/B` | 炮弹环颜色，各 0-255（默认天蓝 90/210/255，可开火时变绿） |
+| | `GravityPercent` | 重力百分比 0-200，100=真实重力，0=无下坠对比用 |
+| | `GreenAngle` | 炮口与所需弹道方向夹角 ≤ 该值（度）时变绿，默认 1.5 |
+| | `Trace` / `TraceDots` | 1/0 画理想抛体轨迹虚线 / 轨迹点数 4-60 |
 | Hit | `HitMarker` / `HitMarkerMs` / `HitMarkerPx` | 命中标记：开关 / 时长 ms / 线段长度 px |
 | | `HitText` | 标记上方文字，默认 HIT，留空不显示 |
 | | `HitSound` / `HitVolume` | 命中音效开关 / 音量 0-100 |
@@ -92,10 +112,12 @@ Requires only `csc.exe` from the .NET Framework (ships with Windows).
 
 ## 已知限制 / Known limitations
 
-- 命中反馈依赖「目标血量上涨」判定，需要先锁定目标；环的提前量计算与服务器无关
-- 只处理机炮（bullet），不涉及导弹/炸弹
+- 命中反馈依赖「目标血量上涨」判定，需要先锁定目标；环的计算与服务器无关
+- 只处理机枪（bullet）与 `CannonScript` 炮弹；导弹/炸弹/火箭不处理
+- 炮弹按理想抛体（只受重力、无空气阻力）解算；若弹丸 prefab 自带 drag 会有小误差
 - Hit detection watches the locked target's damage value, so a locked target is required
-- Guns only (bullets), no missiles or bombs
+- Guns (bullets) and `CannonScript` cannon projectiles only; no missiles, bombs or rockets
+- Cannon solution assumes ideal projectile motion (gravity only, no drag); projectile prefab drag would add a small error
 
 ## 许可 / License
 

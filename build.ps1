@@ -16,7 +16,7 @@ $modules = @(
   "mscorlib.dll","System.dll","System.Core.dll","netstandard.dll",
   "UnityEngine.CoreModule.dll","UnityEngine.dll","UnityEngine.IMGUIModule.dll",
   "UnityEngine.InputLegacyModule.dll","UnityEngine.TextRenderingModule.dll",
-  "UnityEngine.AudioModule.dll","Game.dll","FishNet.Runtime.dll"
+  "UnityEngine.AudioModule.dll","UnityEngine.PhysicsModule.dll","Game.dll","FishNet.Runtime.dll"
 )
 $refs = $modules | ForEach-Object { "-r:""$Managed\$_""" }
 $refs += "-r:""$Bep\BepInEx.dll"""
@@ -24,6 +24,7 @@ $refs += "-r:""$Bep\0Harmony.dll"""
 
 Write-Host "building..."
 & $Csc /noconfig /nostdlib+ /target:library /langversion:5 "/out:$OutDll" @refs (Join-Path $PSScriptRoot "src\Plugin.cs")
+if ($LASTEXITCODE -ne 0) { throw "build failed (csc exit $LASTEXITCODE)" }
 if (-not (Test-Path $OutDll)) { throw "build failed" }
 Write-Host ("ok  {0} bytes  ->  {1}" -f (Get-Item $OutDll).Length, $OutDll)
 
