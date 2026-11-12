@@ -324,6 +324,7 @@ namespace SP2GunRing
                 TrackedTarget tt = box.TrackedTarget;
                 if (tt == null || tt.Target == null) return;
                 if (tt.Target != Instance._target) return;
+                RememberFriendly(tt);
                 HideFieldComponent(_jDistField, box);
                 HideFieldComponent(_jNameField, box);
                 if (CAceHideVanilla.Value)
@@ -348,6 +349,7 @@ namespace SP2GunRing
                 TrackedTarget tt = box.TrackedTarget;
                 if (tt == null || tt.Target == null) return;
                 if (tt.Target != Instance._target) return;
+                RememberFriendly(tt);
                 if (_boxDistProp != null)
                 {
                     GameObject go = _boxDistProp.GetValue(box, null) as GameObject;
@@ -394,6 +396,19 @@ namespace SP2GunRing
         float _cannonErrNext;
         float _aceErrNext;
         static string _aceTeamLogged;
+        static Target _aceFriendlyTarget;
+        static bool _aceFriendlyValue;
+
+        static void RememberFriendly(TrackedTarget tt)
+        {
+            try
+            {
+                if (tt == null || tt.Target == null) return;
+                _aceFriendlyTarget = tt.Target;
+                _aceFriendlyValue = tt.IsFriendly;
+            }
+            catch { }
+        }
 
         Target TargetOf(TargetingSystem ts)
         {
@@ -530,8 +545,8 @@ namespace SP2GunRing
             CAceDistPx = Config.Bind("AceLabel", "DistanceFontPx", 18, new ConfigDescription("距离字号(像素) / distance font px", new AcceptableValueRange<int>(8, 48)));
             CAceNamePx = Config.Bind("AceLabel", "NameFontPx", 13, new ConfigDescription("机体名/操作者字号(像素) / name font px", new AcceptableValueRange<int>(8, 36)));
             CAceR = Config.Bind("AceLabel", "R", 80, "友方/通用颜色 R / friendly or normal red");
-            CAceG = Config.Bind("AceLabel", "G", 255, "友方/通用颜色 G / friendly or normal green");
-            CAceB = Config.Bind("AceLabel", "B", 120, "友方/通用颜色 B / friendly or normal blue");
+            CAceG = Config.Bind("AceLabel", "G", 170, "友方/通用颜色 G / friendly or normal green");
+            CAceB = Config.Bind("AceLabel", "B", 255, "友方/通用颜色 B / friendly or normal blue");
             CAceEnemyR = Config.Bind("AceLabel", "EnemyR", 255, "敌方颜色 R / enemy red");
             CAceEnemyG = Config.Bind("AceLabel", "EnemyG", 60, "敌方颜色 G / enemy green");
             CAceEnemyB = Config.Bind("AceLabel", "EnemyB", 60, "敌方颜色 B / enemy blue");
@@ -1378,12 +1393,81 @@ namespace SP2GunRing
             return "";
         }
 
+        bool TryFriendlyFromTargeting(TargetingSystem ts)
+        {
+            if (ts == null || _target == null) return false;
+            try
+            {
+                foreach (TrackedTarget tt in ts.Targets)
+                {
+                    if (tt == null || tt.Target == null) continue;
+                    bool same = tt.Target == _target;
+                    if (!same && tt.Target.Name == _target.Name)
+                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
+                    if (!same) continue;
+                    _aceFriendlyTarget = _target;
+                    _aceFriendlyValue = tt.IsFriendly;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        bool TryFriendlyFromBoxes()
+        {
+            if (_target == null) return false;
+            try
+            {
+                TargetBoxScript[] boxes = Resources.FindObjectsOfTypeAll<TargetBoxScript>();
+                for (int i = 0; i < boxes.Length; i++)
+                {
+                    TargetBoxScript b = boxes[i];
+                    if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
+                    TrackedTarget tt = b.TrackedTarget;
+                    bool same = tt.Target == _target;
+                    if (!same && tt.Target.Name == _target.Name)
+                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
+                    if (!same) continue;
+                    _aceFriendlyTarget = _target;
+                    _aceFriendlyValue = tt.IsFriendly;
+                    return true;
+                }
+                TargetBoxScriptJuicy[] juicy = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
+                for (int i = 0; i < juicy.Length; i++)
+                {
+                    TargetBoxScriptJuicy b = juicy[i];
+                    if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
+                    TrackedTarget tt = b.TrackedTarget;
+                    bool same = tt.Target == _target;
+                    if (!same && tt.Target.Name == _target.Name)
+                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
+                    if (!same) continue;
+                    _aceFriendlyTarget = _target;
+                    _aceFriendlyValue = tt.IsFriendly;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         bool TargetIsFriendly()
         {
             if (_craft == null) return false;
-            if (_target != null) return _target.TeamId == _craft.TeamId;
-            if (_fallback != null) return _fallback.TeamId == _craft.TeamId;
-            return false;
+            if (_target == null)
+            {
+                if (_fallback != null) return _fallback.TeamId == _craft.TeamId;
+                return false;
+            }
+            // 优先用游戏自己的 TrackedTarget.IsFriendly（= AggressionLevel.Friendly），
+            // 比直接比 Target.TeamId 可靠；目标框 Postfix 里会顺手缓存一份。
+            if (_aceFriendlyTarget == _target) return _aceFriendlyValue;
+            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) return _aceFriendlyValue;
+            if (TryFriendlyFromTargeting(PodSystem())) return _aceFriendlyValue;
+            if (TryFriendlyFromBoxes()) return _aceFriendlyValue;
+            try { if (_target.Player != null) return _target.Player.TeamId == _craft.TeamId; } catch { }
+            return _target.TeamId == _craft.TeamId;
         }
 
         static void DrawHudLabel(Rect r, string text, GUIStyle style)
