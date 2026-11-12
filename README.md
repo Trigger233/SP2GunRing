@@ -11,6 +11,7 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - 锁定目标后，在准心旁边显示提前量环；把环压在敌机上即代表机头已对准提前量，开火即可命中
 - 环的颜色随状态变化：未对准 / 可开火 / 提前量超限
 - **炮弹预测环（v0.8.0 新增）**：自动找机上初速最快的 `CannonScript` 火炮，按理想抛体运动（只受重力、无空气阻力）解算刚体弹丸；锁定目标时同时计算目标提前量与重力下坠，环=把机头拉到所需弹道方向后目标会出现在的位置；没锁目标时按固定距离显示当前炮弹落点，并用虚线画出抛物线弹道
+- **Ace Combat 风格目标标签（v0.9.0 新增）**：锁定/选中目标后，隐藏游戏原来的目标框文字，改画成「距离 / 机体名 / 操作者名」三行，带方括号角标；敌方红色、友方绿色，字号和颜色可调
 - 命中反馈：四段短线围成空心 X（FPS 式）+ 上方 HIT 字样 + hit.wav 音效，文字可自定义
 - 命中判定同时覆盖网络玩家与本地 AI 机（单人模式也可用）
 - 四种准心样式、颜色、尺寸、搜索范围全部可配
@@ -21,6 +22,7 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - Draws a lead ring next to the crosshair; putting the ring on the target means your nose is on the lead point
 - Colour states: not aligned / ready to fire / offset clamped
 - **Cannon ballistic ring (new in v0.8.0)**: finds the fastest `CannonScript` cannon and solves its rigidbody projectile as ideal projectile motion (gravity only, no drag). With a locked target it adds both target lead and gravity drop; the ring marks where the target will appear once the nose is pulled onto the required ballistic direction. Without a target it draws the predicted impact point at a fixed range plus a dotted parabolic trail
+- **Ace Combat style target label (new in v0.9.0)**: when a target is selected, hides the vanilla target box text and draws three lines: distance / aircraft type / operator, with bracket corners. Enemy red, friendly green; font sizes and colours configurable
 - Hit feedback: FPS-style X made of four non-crossing segments, a configurable HIT label above it and hit.wav
 - Works for both networked players and local AI aircraft (single-player included)
 - 4 reticle styles, colours, size, search range all configurable
@@ -30,9 +32,9 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 ## 安装 / Install
 
 1. 游戏自带 BepInEx 5.4.x，无需另装 / The game ships with BepInEx, nothing else to install
-2. 下载 `bin/SP2GunRing-v0.8.0.zip`，解压到游戏根目录合并覆盖：
+2. 下载 `bin/SP2GunRing-v0.9.0.zip`，解压到游戏根目录合并覆盖：
    `...\steamapps\common\SimplePlanes 2\`
-   Download `bin/SP2GunRing-v0.8.0.zip` and extract it into the game root folder
+   Download `bin/SP2GunRing-v0.9.0.zip` and extract it into the game root folder
 3. 启动游戏，进入飞行场景即可 / Launch the game and enter a flight scene
 
 ## 用法 / Usage
@@ -58,6 +60,16 @@ Cannon ballistic ring (v0.8.0):
 - Appears automatically when the craft carries Cannon parts (cyan ring + dotted trail)
 - With a locked target: the ring marks where the target will appear once the nose is on the required ballistic direction; put the target on the ring and fire when it turns green (target lead + gravity drop included)
 - Without a target: the ring is the impact point of the current barrel direction at `Range`; the dotted line is the ideal parabola
+
+Ace Combat 风格目标标签（v0.9.0）：
+- 锁定/选中目标后，目标旁边显示三行：距离（米）/ 机体名 / 操作者名
+- 默认把游戏原来的目标框文字和框一起隐藏，换成方括号角标 + 三行文字；敌方红色、友方绿色
+- 关闭 `HideVanillaBox` 可以只替换文字、保留原版目标框
+
+Ace Combat style target label (v0.9.0):
+- Distance (m) / aircraft type / operator, three lines next to the selected target
+- Replaces the vanilla target box text and box with bracket corners by default; enemy red, friendly green
+- Turn off `HideVanillaBox` to replace only the text and keep the vanilla box
 
 ## 配置 / Configuration
 
@@ -90,6 +102,13 @@ Cannon ballistic ring (v0.8.0):
 | | `GravityPercent` | 重力百分比 0-200，100=真实重力，0=无下坠对比用 |
 | | `GreenAngle` | 炮口与所需弹道方向夹角 ≤ 该值（度）时变绿，默认 1.5 |
 | | `Trace` / `TraceDots` | 1/0 画理想抛体轨迹虚线 / 轨迹点数 4-60 |
+| AceLabel | `Enabled` | 1/0 Ace Combat 风格目标标签开关 |
+| | `HideVanillaBox` | 1/0 连游戏原目标框一起隐藏；0=只替换文字保留原框 |
+| | `BoxPx` | 目标框边长（像素，默认 34） |
+| | `DistanceFontPx` / `NameFontPx` | 距离字号 / 机体名与操作者字号（像素） |
+| | `R/G/B` | 文字颜色，也作友方框色，各 0-255（默认绿色 80/255/120） |
+| | `EnemyR/G/B` | 敌方目标框颜色，各 0-255（默认红色 255/60/60） |
+| | `TeamColor` | 1/0 按敌我上色；0=统一用 R/G/B |
 | Hit | `HitMarker` / `HitMarkerMs` / `HitMarkerPx` | 命中标记：开关 / 时长 ms / 线段长度 px |
 | | `HitText` | 标记上方文字，默认 HIT，留空不显示 |
 | | `HitSound` / `HitVolume` | 命中音效开关 / 音量 0-100 |
@@ -116,7 +135,9 @@ Requires only `csc.exe` from the .NET Framework (ships with Windows).
 - 炮弹预测环只对 `CannonScript` 火炮生效；普通机枪弹（BulletPool）在 SP2 里是直线、无重力
 - 只处理机枪（bullet）与 `CannonScript` 炮弹；导弹/炸弹/火箭不处理
 - 炮弹按理想抛体（只受重力、无空气阻力）解算；若弹丸 prefab 自带 drag 会有小误差
+- Ace Combat 标签目前只替换「当前锁定/选中」的那一个目标，其他目标保留原版标签
 - Hit detection watches the locked target's damage value, so a locked target is required
+- The Ace Combat label currently replaces only the currently selected target; other targets keep the vanilla label
 - The cannon ring only works for `CannonScript` cannons; regular BulletPool rounds are straight-line and gravity-free in SP2
 - Guns (bullets) and `CannonScript` cannon projectiles only; no missiles, bombs or rockets
 - Cannon solution assumes ideal projectile motion (gravity only, no drag); projectile prefab drag would add a small error

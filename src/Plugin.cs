@@ -12,6 +12,7 @@ using HarmonyLib;
 using Assets.Scripts.Flight.Combat.Bullets;
 using Assets.Scripts.Flight;
 using Assets.Scripts.Flight.Combat;
+using Assets.Scripts.Flight.UI.Targeting;
 using Assets.Scripts.Craft;
 using Assets.Scripts.Craft.Parts.Modifiers;
 using Assets.Scripts.Craft.Parts.Modifiers.Weapons;
@@ -93,7 +94,29 @@ namespace SP2GunRing
         }
     }
 
-    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.8.0")]
+    // 把游戏原来的目标框文字换成 Ace Combat 风格（距离 / 机体名 / 操作者）
+    [HarmonyPatch(typeof(TargetBoxScript), "LateUpdate")]
+    static class TargetBoxLabelPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(TargetBoxScript __instance)
+        {
+            GunRingPlugin.OnTargetBox(__instance);
+        }
+    }
+
+    // Juicy HUD 的目标框（UI Widget 版）也要处理
+    [HarmonyPatch(typeof(TargetBoxScriptJuicy), "LateUpdate")]
+    static class TargetBoxJuicyPatch
+    {
+        [HarmonyPostfix]
+        static void Postfix(TargetBoxScriptJuicy __instance)
+        {
+            GunRingPlugin.OnTargetBoxJuicy(__instance);
+        }
+    }
+
+    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.9.0")]
     public class GunRingPlugin : BaseUnityPlugin
     {
         // Gravy Mod Menu 会扫每个插件的静态字符串字段 GravyMenuTab，
@@ -144,6 +167,16 @@ namespace SP2GunRing
         static ConfigEntry<int> CCannonGravityPct;
         static ConfigEntry<bool> CCannonUseTargetRange;
         static ConfigEntry<float> CCannonGreenAngle;
+
+        // Ace Combat 风格目标标签
+        static ConfigEntry<bool> CAceLabel;
+        static ConfigEntry<bool> CAceHideVanilla;
+        static ConfigEntry<int> CAceBoxPx;
+        static ConfigEntry<int> CAceDistPx;
+        static ConfigEntry<int> CAceNamePx;
+        static ConfigEntry<int> CAceR, CAceG, CAceB;
+        static ConfigEntry<int> CAceEnemyR, CAceEnemyG, CAceEnemyB;
+        static ConfigEntry<bool> CAceTeamColor;
 
         bool _on = true;
         internal static GunRingPlugin Instance;
@@ -253,6 +286,87 @@ namespace SP2GunRing
             if (ac == p._craft) return;
             HitIfTarget(p, ac);
         }
+
+        // TargetBoxScript.LateUpdate 的 Postfix：把当前锁定目标的原版文字/框换成我们的
+        static readonly PropertyInfo _boxDistProp = typeof(TargetBoxScript).GetProperty("DistanceLabelObject", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly PropertyInfo _boxNameProp = typeof(TargetBoxScript).GetProperty("NameLabelObject", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly PropertyInfo _boxSpriteProp = typeof(TargetBoxScript).GetProperty("SpriteEnabled", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _jDistField = typeof(TargetBoxScriptJuicy).GetField("_distanceLabel", BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _jNameField = typeof(TargetBoxScriptJuicy).GetField("_nameLabel", BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _jSpriteField = typeof(TargetBoxScriptJuicy).GetField("_sprite", BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly FieldInfo _jLockField = typeof(TargetBoxScriptJuicy).GetField("_lockSprite", BindingFlags.NonPublic | BindingFlags.Instance);
+        static bool _aceBoxLogged;
+
+        static void HideFieldComponent(FieldInfo fi, object target)
+        {
+            if (fi == null) return;
+            try
+            {
+                object o = fi.GetValue(target);
+                Component c = o as Component;
+                if (c != null) { c.gameObject.SetActive(false); return; }
+                if (o != null)
+                {
+                    PropertyInfo gp = o.GetType().GetProperty("gameObject");
+                    GameObject go = gp != null ? gp.GetValue(o, null) as GameObject : null;
+                    if (go != null) go.SetActive(false);
+                }
+            }
+            catch { }
+        }
+
+        internal static void OnTargetBoxJuicy(TargetBoxScriptJuicy box)
+        {
+            try
+            {
+                if (box == null || !CAceLabel.Value || Instance == null) return;
+                TrackedTarget tt = box.TrackedTarget;
+                if (tt == null || tt.Target == null) return;
+                if (tt.Target != Instance._target) return;
+                HideFieldComponent(_jDistField, box);
+                HideFieldComponent(_jNameField, box);
+                if (CAceHideVanilla.Value)
+                {
+                    HideFieldComponent(_jSpriteField, box);
+                    HideFieldComponent(_jLockField, box);
+                }
+                if (!_aceBoxLogged)
+                {
+                    _aceBoxLogged = true;
+                    L.LogInfo("[GunRing] ace label active target=" + tt.Target.Name);
+                }
+            }
+            catch { }
+        }
+
+        internal static void OnTargetBox(TargetBoxScript box)
+        {
+            try
+            {
+                if (box == null || !CAceLabel.Value || Instance == null) return;
+                TrackedTarget tt = box.TrackedTarget;
+                if (tt == null || tt.Target == null) return;
+                if (tt.Target != Instance._target) return;
+                if (_boxDistProp != null)
+                {
+                    GameObject go = _boxDistProp.GetValue(box, null) as GameObject;
+                    if (go != null) go.SetActive(false);
+                }
+                if (_boxNameProp != null)
+                {
+                    GameObject go = _boxNameProp.GetValue(box, null) as GameObject;
+                    if (go != null) go.SetActive(false);
+                }
+                if (CAceHideVanilla.Value && _boxSpriteProp != null)
+                    _boxSpriteProp.SetValue(box, false, null);
+                if (!_aceBoxLogged)
+                {
+                    _aceBoxLogged = true;
+                    L.LogInfo("[GunRing] ace label active target=" + tt.Target.Name);
+                }
+            }
+            catch { }
+        }
         static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
         float _nextScan;
         AircraftScript _craft;
@@ -277,6 +391,7 @@ namespace SP2GunRing
         float _cannonLife = 10f;
         float _dbgCannonNext;
         float _cannonErrNext;
+        float _aceErrNext;
 
         Target TargetOf(TargetingSystem ts)
         {
@@ -404,6 +519,22 @@ namespace SP2GunRing
             CCannonTrace = Config.Bind("Cannon", "Trace", true, "画理想抛体轨迹虚线 / draw ballistic trail");
             CCannonTraceDots = Config.Bind("Cannon", "TraceDots", 18, new ConfigDescription("轨迹点数 4-60 / trail dots 4-60", new AcceptableValueRange<int>(4, 60)));
 
+            // ---- Ace Combat 风格目标标签 ----
+            // 隐藏游戏原来的目标框文字（可选连框一起隐藏），改成：
+            // 距离(第一行) / 机体名(第二行) / 操作者名(第三行)
+            CAceLabel = Config.Bind("AceLabel", "Enabled", true, "Ace Combat 风格目标标签 / Ace Combat style target labels");
+            CAceHideVanilla = Config.Bind("AceLabel", "HideVanillaBox", true, "隐藏游戏原目标框并自己画框 / hide vanilla target box and draw our own");
+            CAceBoxPx = Config.Bind("AceLabel", "BoxPx", 34, new ConfigDescription("目标框边长(像素) / target box size px", new AcceptableValueRange<int>(16, 120)));
+            CAceDistPx = Config.Bind("AceLabel", "DistanceFontPx", 18, new ConfigDescription("距离字号(像素) / distance font px", new AcceptableValueRange<int>(8, 48)));
+            CAceNamePx = Config.Bind("AceLabel", "NameFontPx", 13, new ConfigDescription("机体名/操作者字号(像素) / name font px", new AcceptableValueRange<int>(8, 36)));
+            CAceR = Config.Bind("AceLabel", "R", 80, "友方/通用颜色 R / friendly or normal red");
+            CAceG = Config.Bind("AceLabel", "G", 255, "友方/通用颜色 G / friendly or normal green");
+            CAceB = Config.Bind("AceLabel", "B", 120, "友方/通用颜色 B / friendly or normal blue");
+            CAceEnemyR = Config.Bind("AceLabel", "EnemyR", 255, "敌方颜色 R / enemy red");
+            CAceEnemyG = Config.Bind("AceLabel", "EnemyG", 60, "敌方颜色 G / enemy green");
+            CAceEnemyB = Config.Bind("AceLabel", "EnemyB", 60, "敌方颜色 B / enemy blue");
+            CAceTeamColor = Config.Bind("AceLabel", "TeamColor", true, "按敌我上色；关掉则统一用 R/G/B / colour by team");
+
             CEnabled.SettingChanged += (s, e) => { _on = CEnabled.Value; L.LogInfo("[GunRing] " + (_on ? "on" : "off") + " (menu)"); };
             CDumpNow.SettingChanged += (s, e) =>
             {
@@ -429,7 +560,9 @@ namespace SP2GunRing
                 h.PatchAll(typeof(BulletHitProbe));
                 h.PatchAll(typeof(DamageRecvProbe));
                 h.PatchAll(typeof(DamageSyncProbe));
-                L.LogInfo("[GunRing] bullet probe patched");
+                h.PatchAll(typeof(TargetBoxLabelPatch));
+                h.PatchAll(typeof(TargetBoxJuicyPatch));
+                L.LogInfo("[GunRing] bullet probe + target label patched (distProp=" + (_boxDistProp != null) + " nameProp=" + (_boxNameProp != null) + " spriteProp=" + (_boxSpriteProp != null) + " juicy=" + (_jNameField != null) + ")");
             }
             catch (Exception e) { L.LogWarning("[GunRing] bullet probe failed: " + e.Message); }
 
@@ -1188,6 +1321,139 @@ namespace SP2GunRing
             return Mathf.Abs(fin - range) <= Mathf.Max(5f, range * 0.05f);
         }
 
+        void DrawAceLabelSafe(Camera cam)
+        {
+            try { DrawAceLabel(cam); }
+            catch (Exception e)
+            {
+                if (Time.unscaledTime >= _aceErrNext)
+                {
+                    _aceErrNext = Time.unscaledTime + 5f;
+                    L.LogWarning("[GunRing] ace label: " + e.Message);
+                }
+            }
+        }
+
+        // ---- Ace Combat 风格目标标签 ----
+        AircraftScript TargetAircraft()
+        {
+            if (_target != null)
+            {
+                try { if (_target.Player != null && _target.Player.Aircraft != null) return _target.Player.Aircraft; } catch { }
+            }
+            if (_watched != null) return _watched;
+            if (_fallback != null) return _fallback;
+            return null;
+        }
+
+        string TargetModelName()
+        {
+            AircraftScript ac = TargetAircraft();
+            if (ac != null && ac.Aircraft != null && !string.IsNullOrEmpty(ac.Aircraft.Name)) return ac.Aircraft.Name;
+            if (_target != null && !string.IsNullOrEmpty(_target.Name))
+            {
+                int nl = _target.Name.IndexOf('\n');
+                if (nl > 0) return _target.Name.Substring(0, nl).Trim();
+            }
+            return "UNKNOWN";
+        }
+
+        string TargetOperatorName()
+        {
+            if (_target != null)
+            {
+                try { if (_target.Player != null) { string pn = _target.Player.Name; if (!string.IsNullOrEmpty(pn)) return pn; } } catch { }
+                string n = _target.Name;
+                if (!string.IsNullOrEmpty(n))
+                {
+                    int nl = n.LastIndexOf('\n');
+                    if (nl >= 0 && nl + 1 < n.Length) return n.Substring(nl + 1).Trim();
+                    return n;
+                }
+            }
+            if (_fallback != null) return _fallback.name;
+            return "";
+        }
+
+        bool TargetIsFriendly()
+        {
+            if (_craft == null) return false;
+            if (_target != null) return _target.TeamId == _craft.TeamId;
+            if (_fallback != null) return _fallback.TeamId == _craft.TeamId;
+            return false;
+        }
+
+        static void DrawHudLabel(Rect r, string text, GUIStyle style)
+        {
+            Color old = GUI.color;
+            GUIStyle sh = new GUIStyle(style);
+            sh.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), text, sh);
+            GUI.color = old;
+            GUI.Label(r, text, style);
+        }
+
+        static void DrawAceBox(float x, float y, float size, Color col)
+        {
+            Color old = GUI.color;
+            GUI.color = col;
+            float h = size * 0.5f;
+            float arm = Mathf.Max(4f, size * 0.26f);
+            float th = Mathf.Max(1.5f, size * 0.05f);
+            GUI.DrawTexture(new Rect(x - h, y - h, arm, th), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x - h, y - h, th, arm), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x + h - arm, y - h, arm, th), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x + h - th, y - h, th, arm), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x - h, y + h - th, arm, th), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x - h, y + h - arm, th, arm), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x + h - arm, y + h - th, arm, th), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x + h - th, y + h - arm, th, arm), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(x - 1.5f, y - 1.5f, 3f, 3f), Texture2D.whiteTexture);
+            GUI.color = old;
+        }
+
+        void DrawAceLabel(Camera cam)
+        {
+            if (!CAceLabel.Value || _craft == null || !HasTarget) return;
+            Vector3 world = TargetPos;
+            Vector3 sp = cam.WorldToScreenPoint(world);
+            if (sp.z <= 0f) return;
+            float x = sp.x, y = Screen.height - sp.y;
+            if (x < -200f || x > Screen.width + 200f || y < -200f || y > Screen.height + 200f) return;
+
+            bool friendly = TargetIsFriendly();
+            Color boxCol = (CAceTeamColor.Value && !friendly) ? Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB) : Rgb(CAceR, CAceG, CAceB);
+            Color textCol = Rgb(CAceR, CAceG, CAceB);
+            float box = Mathf.Max(12f, CAceBoxPx.Value);
+            if (CAceHideVanilla.Value) DrawAceBox(x, y, box, boxCol);
+
+            string model = TargetModelName();
+            string op = TargetOperatorName();
+            string dist = Mathf.RoundToInt(Vector3.Distance(CraftPos(), world)).ToString();
+            if (string.IsNullOrEmpty(model)) model = "UNKNOWN";
+            if (string.IsNullOrEmpty(op)) op = "UNKNOWN";
+            model = model.ToUpperInvariant();
+            op = op.ToUpperInvariant();
+
+            int dPx = Mathf.Max(8, CAceDistPx.Value);
+            int nPx = Mathf.Max(8, CAceNamePx.Value);
+            GUIStyle ds = new GUIStyle(GUI.skin.label);
+            ds.fontSize = dPx; ds.fontStyle = FontStyle.Bold; ds.alignment = TextAnchor.UpperLeft;
+            ds.normal.textColor = textCol;
+            GUIStyle ns = new GUIStyle(GUI.skin.label);
+            ns.fontSize = nPx; ns.fontStyle = FontStyle.Bold; ns.alignment = TextAnchor.UpperLeft;
+            ns.normal.textColor = textCol;
+
+            float textW = 260f;
+            float left = x + box * 0.5f + 8f;
+            if (left + textW > Screen.width - 8f) left = x - box * 0.5f - 8f - textW;
+            if (left < 8f) left = 8f;
+            float top = y - box * 0.5f - 2f;
+            DrawHudLabel(new Rect(left, top, textW, dPx + 4f), dist, ds);
+            DrawHudLabel(new Rect(left, top + dPx + 2f, textW, nPx + 4f), model, ns);
+            DrawHudLabel(new Rect(left, top + dPx + nPx + 5f, textW, nPx + 4f), op, ns);
+        }
+
         void DrawCannon(Camera cam)
         {
             if (!CCannonEnabled.Value || _craft == null || _cannon == null) return;
@@ -1298,6 +1564,7 @@ namespace SP2GunRing
             Camera cam = ViewCam();
             if (cam == null) return;
 
+            DrawAceLabelSafe(cam);
             DrawCannonSafe(cam);
 
             if (!HasTarget || _bulletSpeed <= 10f) return;
