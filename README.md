@@ -11,7 +11,7 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - 锁定目标后，在准心旁边显示提前量环；把环压在敌机上即代表机头已对准提前量，开火即可命中
 - 环的颜色随状态变化：未对准 / 可开火 / 提前量超限
 - **炮弹预测环（v0.8.0 新增）**：自动找机上初速最快的 `CannonScript` 火炮，按理想抛体运动（只受重力、无空气阻力）解算刚体弹丸；锁定目标时同时计算目标提前量与重力下坠，环=把机头拉到所需弹道方向后目标会出现在的位置；没锁目标时按固定距离显示当前炮弹落点，并用虚线画出抛物线弹道
-- **Ace Combat 风格目标标签（v0.9.0 新增）**：锁定/选中目标后，隐藏游戏原来的目标框文字，改画成「距离 / 机体名 / 操作者名」三行，带方括号角标；敌方红色、友方蓝色，字号和颜色可调
+- **Ace Combat 风格目标标签（v0.9.0 新增）**：锁定/选中目标后，隐藏游戏原来的目标框文字，改画成「距离 / 机体名 / 操作者名」三行，带方括号角标；敌方红色、友方浅蓝、中立绿色，字号和颜色可调
 - 命中反馈：四段短线围成空心 X（FPS 式）+ 上方 HIT 字样 + hit.wav 音效，文字可自定义
 - 命中判定同时覆盖网络玩家与本地 AI 机（单人模式也可用）
 - 四种准心样式、颜色、尺寸、搜索范围全部可配
@@ -22,7 +22,7 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - Draws a lead ring next to the crosshair; putting the ring on the target means your nose is on the lead point
 - Colour states: not aligned / ready to fire / offset clamped
 - **Cannon ballistic ring (new in v0.8.0)**: finds the fastest `CannonScript` cannon and solves its rigidbody projectile as ideal projectile motion (gravity only, no drag). With a locked target it adds both target lead and gravity drop; the ring marks where the target will appear once the nose is pulled onto the required ballistic direction. Without a target it draws the predicted impact point at a fixed range plus a dotted parabolic trail
-- **Ace Combat style target label (new in v0.9.0)**: when a target is selected, hides the vanilla target box text and draws three lines: distance / aircraft type / operator, with bracket corners. Enemy red, friendly blue; font sizes and colours configurable
+- **Ace Combat style target label (new in v0.9.0)**: when a target is selected, hides the vanilla target box text and draws three lines: distance / aircraft type / operator, with bracket corners. Enemy red, friendly light blue, neutral green; font sizes and colours configurable
 - Hit feedback: FPS-style X made of four non-crossing segments, a configurable HIT label above it and hit.wav
 - Works for both networked players and local AI aircraft (single-player included)
 - 4 reticle styles, colours, size, search range all configurable
@@ -63,12 +63,12 @@ Cannon ballistic ring (v0.8.0):
 
 Ace Combat 风格目标标签（v0.9.0）：
 - 锁定/选中目标后，目标旁边显示三行：距离（米）/ 机体名 / 操作者名
-- 默认把游戏原来的目标框文字和框一起隐藏，换成方括号角标 + 三行文字；敌方红色、友方蓝色
+- 默认把游戏原来的目标框文字和框一起隐藏，换成方括号角标 + 三行文字；敌方红色、友方浅蓝、中立绿色
 - 关闭 `HideVanillaBox` 可以只替换文字、保留原版目标框
 
 Ace Combat style target label (v0.9.0):
 - Distance (m) / aircraft type / operator, three lines next to the selected target
-- Replaces the vanilla target box text and box with bracket corners by default; enemy red, friendly blue
+- Replaces the vanilla target box text and box with bracket corners by default; enemy red, friendly light blue, neutral green
 - Turn off `HideVanillaBox` to replace only the text and keep the vanilla box
 
 ## 配置 / Configuration
@@ -106,8 +106,9 @@ Ace Combat style target label (v0.9.0):
 | | `HideVanillaBox` | 1/0 连游戏原目标框一起隐藏；0=只替换文字保留原框 |
 | | `BoxPx` | 目标框边长（像素，默认 34） |
 | | `DistanceFontPx` / `NameFontPx` | 距离字号 / 机体名与操作者字号（像素） |
-| | `R/G/B` | 文字颜色，也作友方框色，各 0-255（默认蓝色 80/170/255） |
-| | `EnemyR/G/B` | 敌方目标框颜色，各 0-255（默认红色 255/60/60） |
+| | `R/G/B` | 中立/通用颜色，各 0-255（默认绿色 80/255/120） |
+| | `FriendR/G/B` | 友方颜色，各 0-255（默认浅蓝 120/210/255） |
+| | `EnemyR/G/B` | 敌方颜色，各 0-255（默认红色 255/60/60） |
 | | `TeamColor` | 1/0 按敌我上色；0=统一用 R/G/B |
 | | `TextMatchBox` | 1/0 文字颜色跟目标框一致；0=文字统一用 R/G/B（默认 1） |
 | Hit | `HitMarker` / `HitMarkerMs` / `HitMarkerPx` | 命中标记：开关 / 时长 ms / 线段长度 px |

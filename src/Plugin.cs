@@ -175,6 +175,7 @@ namespace SP2GunRing
         static ConfigEntry<int> CAceDistPx;
         static ConfigEntry<int> CAceNamePx;
         static ConfigEntry<int> CAceR, CAceG, CAceB;
+        static ConfigEntry<int> CAceFriendR, CAceFriendG, CAceFriendB;
         static ConfigEntry<int> CAceEnemyR, CAceEnemyG, CAceEnemyB;
         static ConfigEntry<bool> CAceTeamColor;
         static ConfigEntry<bool> CAceTextMatchBox;
@@ -398,6 +399,7 @@ namespace SP2GunRing
         static string _aceTeamLogged;
         static Target _aceFriendlyTarget;
         static bool _aceFriendlyValue;
+        static int _aceAggression = -1;
 
         static void RememberFriendly(TrackedTarget tt)
         {
@@ -406,6 +408,7 @@ namespace SP2GunRing
                 if (tt == null || tt.Target == null) return;
                 _aceFriendlyTarget = tt.Target;
                 _aceFriendlyValue = tt.IsFriendly;
+                _aceAggression = (int)tt.AggressionLevel;
             }
             catch { }
         }
@@ -544,9 +547,12 @@ namespace SP2GunRing
             CAceBoxPx = Config.Bind("AceLabel", "BoxPx", 34, new ConfigDescription("目标框边长(像素) / target box size px", new AcceptableValueRange<int>(16, 120)));
             CAceDistPx = Config.Bind("AceLabel", "DistanceFontPx", 18, new ConfigDescription("距离字号(像素) / distance font px", new AcceptableValueRange<int>(8, 48)));
             CAceNamePx = Config.Bind("AceLabel", "NameFontPx", 13, new ConfigDescription("机体名/操作者字号(像素) / name font px", new AcceptableValueRange<int>(8, 36)));
-            CAceR = Config.Bind("AceLabel", "R", 80, "友方/通用颜色 R / friendly or normal red");
-            CAceG = Config.Bind("AceLabel", "G", 170, "友方/通用颜色 G / friendly or normal green");
-            CAceB = Config.Bind("AceLabel", "B", 255, "友方/通用颜色 B / friendly or normal blue");
+            CAceR = Config.Bind("AceLabel", "R", 80, "中立/通用颜色 R / neutral or normal red");
+            CAceG = Config.Bind("AceLabel", "G", 255, "中立/通用颜色 G / neutral or normal green");
+            CAceB = Config.Bind("AceLabel", "B", 120, "中立/通用颜色 B / neutral or normal blue");
+            CAceFriendR = Config.Bind("AceLabel", "FriendR", 120, "友方颜色 R / friendly red");
+            CAceFriendG = Config.Bind("AceLabel", "FriendG", 210, "友方颜色 G / friendly green");
+            CAceFriendB = Config.Bind("AceLabel", "FriendB", 255, "友方颜色 B / friendly blue");
             CAceEnemyR = Config.Bind("AceLabel", "EnemyR", 255, "敌方颜色 R / enemy red");
             CAceEnemyG = Config.Bind("AceLabel", "EnemyG", 60, "敌方颜色 G / enemy green");
             CAceEnemyB = Config.Bind("AceLabel", "EnemyB", 60, "敌方颜色 B / enemy blue");
@@ -1407,6 +1413,7 @@ namespace SP2GunRing
                     if (!same) continue;
                     _aceFriendlyTarget = _target;
                     _aceFriendlyValue = tt.IsFriendly;
+                    _aceAggression = (int)tt.AggressionLevel;
                     return true;
                 }
             }
@@ -1431,6 +1438,7 @@ namespace SP2GunRing
                     if (!same) continue;
                     _aceFriendlyTarget = _target;
                     _aceFriendlyValue = tt.IsFriendly;
+                    _aceAggression = (int)tt.AggressionLevel;
                     return true;
                 }
                 TargetBoxScriptJuicy[] juicy = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
@@ -1445,6 +1453,7 @@ namespace SP2GunRing
                     if (!same) continue;
                     _aceFriendlyTarget = _target;
                     _aceFriendlyValue = tt.IsFriendly;
+                    _aceAggression = (int)tt.AggressionLevel;
                     return true;
                 }
             }
@@ -1452,22 +1461,21 @@ namespace SP2GunRing
             return false;
         }
 
-        bool TargetIsFriendly()
+        // 返回 AggressionLevel：1=Hostile，2=Neutral，3=Friendly；0=Unknown
+        int TargetRelation()
         {
-            if (_craft == null) return false;
+            if (_craft == null) return 0;
             if (_target == null)
             {
-                if (_fallback != null) return _fallback.TeamId == _craft.TeamId;
-                return false;
+                if (_fallback == null) return 0;
+                return _fallback.TeamId == _craft.TeamId ? 3 : 1;
             }
-            // 优先用游戏自己的 TrackedTarget.IsFriendly（= AggressionLevel.Friendly），
-            // 比直接比 Target.TeamId 可靠；目标框 Postfix 里会顺手缓存一份。
-            if (_aceFriendlyTarget == _target) return _aceFriendlyValue;
-            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) return _aceFriendlyValue;
-            if (TryFriendlyFromTargeting(PodSystem())) return _aceFriendlyValue;
-            if (TryFriendlyFromBoxes()) return _aceFriendlyValue;
-            try { if (_target.Player != null) return _target.Player.TeamId == _craft.TeamId; } catch { }
-            return _target.TeamId == _craft.TeamId;
+            if (_aceFriendlyTarget == _target && _aceAggression >= 0) return _aceAggression;
+            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) return _aceAggression;
+            if (TryFriendlyFromTargeting(PodSystem())) return _aceAggression;
+            if (TryFriendlyFromBoxes()) return _aceAggression;
+            try { if (_target.Player != null) return _target.Player.TeamId == _craft.TeamId ? 3 : 1; } catch { }
+            return _target.TeamId == _craft.TeamId ? 3 : 1;
         }
 
         static void DrawHudLabel(Rect r, string text, GUIStyle style)
@@ -1508,8 +1516,13 @@ namespace SP2GunRing
             float x = sp.x, y = Screen.height - sp.y;
             if (x < -200f || x > Screen.width + 200f || y < -200f || y > Screen.height + 200f) return;
 
-            bool friendly = TargetIsFriendly();
-            Color boxCol = (CAceTeamColor.Value && !friendly) ? Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB) : Rgb(CAceR, CAceG, CAceB);
+            int relation = TargetRelation();
+            bool friendly = relation == 3;
+            Color boxCol;
+            if (!CAceTeamColor.Value) boxCol = Rgb(CAceR, CAceG, CAceB);
+            else if (relation == 3) boxCol = Rgb(CAceFriendR, CAceFriendG, CAceFriendB);
+            else if (relation == 1) boxCol = Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB);
+            else boxCol = Rgb(CAceR, CAceG, CAceB); // Neutral / Unknown = green
             Color textCol = CAceTextMatchBox.Value ? boxCol : Rgb(CAceR, CAceG, CAceB);
             float box = Mathf.Max(12f, CAceBoxPx.Value);
             if (_aceTeamLogged != TargetName)
@@ -1518,7 +1531,7 @@ namespace SP2GunRing
                 L.LogInfo("[GunRing] ace draw target=" + TargetName
                     + " team=" + (_target != null ? _target.TeamId.ToString() : "?")
                     + " selfTeam=" + (_craft != null ? _craft.TeamId.ToString() : "?")
-                    + " friendly=" + friendly);
+                    + " friendly=" + friendly + " relation=" + relation);
             }
             if (CAceHideVanilla.Value) DrawAceBox(x, y, box, boxCol);
 
@@ -1533,13 +1546,18 @@ namespace SP2GunRing
             int dPx = Mathf.Max(8, CAceDistPx.Value);
             int nPx = Mathf.Max(8, CAceNamePx.Value);
             GUIStyle ds = new GUIStyle(GUI.skin.label);
-            ds.fontSize = dPx; ds.fontStyle = FontStyle.Bold; ds.alignment = TextAnchor.UpperLeft;
+            ds.fontSize = dPx; ds.fontStyle = FontStyle.Bold; ds.alignment = TextAnchor.UpperLeft; ds.wordWrap = false;
             ds.normal.textColor = textCol;
             GUIStyle ns = new GUIStyle(GUI.skin.label);
-            ns.fontSize = nPx; ns.fontStyle = FontStyle.Bold; ns.alignment = TextAnchor.UpperLeft;
+            ns.fontSize = nPx; ns.fontStyle = FontStyle.Bold; ns.alignment = TextAnchor.UpperLeft; ns.wordWrap = false;
             ns.normal.textColor = textCol;
 
-            float textW = 260f;
+            // 按实际文字宽度给足空间，避免长名字被 260px 的 Rect 截断
+            float textW = 160f;
+            textW = Mathf.Max(textW, ds.CalcSize(new GUIContent(dist)).x);
+            textW = Mathf.Max(textW, ns.CalcSize(new GUIContent(model)).x);
+            textW = Mathf.Max(textW, ns.CalcSize(new GUIContent(op)).x);
+            textW = Mathf.Min(Screen.width - 16f, textW + 16f);
             float left = x + box * 0.5f + 8f;
             if (left + textW > Screen.width - 8f) left = x - box * 0.5f - 8f - textW;
             if (left < 8f) left = 8f;
