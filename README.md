@@ -109,6 +109,7 @@ Ace Combat style target label (v0.9.0):
 | | `R/G/B` | 文字颜色，也作友方框色，各 0-255（默认绿色 80/255/120） |
 | | `EnemyR/G/B` | 敌方目标框颜色，各 0-255（默认红色 255/60/60） |
 | | `TeamColor` | 1/0 按敌我上色；0=统一用 R/G/B |
+| | `TextMatchBox` | 1/0 文字颜色跟目标框一致；0=文字统一用 R/G/B（默认 1） |
 | Hit | `HitMarker` / `HitMarkerMs` / `HitMarkerPx` | 命中标记：开关 / 时长 ms / 线段长度 px |
 | | `HitText` | 标记上方文字，默认 HIT，留空不显示 |
 | | `HitSound` / `HitVolume` | 命中音效开关 / 音量 0-100 |

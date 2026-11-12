@@ -177,6 +177,7 @@ namespace SP2GunRing
         static ConfigEntry<int> CAceR, CAceG, CAceB;
         static ConfigEntry<int> CAceEnemyR, CAceEnemyG, CAceEnemyB;
         static ConfigEntry<bool> CAceTeamColor;
+        static ConfigEntry<bool> CAceTextMatchBox;
 
         bool _on = true;
         internal static GunRingPlugin Instance;
@@ -392,6 +393,7 @@ namespace SP2GunRing
         float _dbgCannonNext;
         float _cannonErrNext;
         float _aceErrNext;
+        static string _aceTeamLogged;
 
         Target TargetOf(TargetingSystem ts)
         {
@@ -534,6 +536,7 @@ namespace SP2GunRing
             CAceEnemyG = Config.Bind("AceLabel", "EnemyG", 60, "敌方颜色 G / enemy green");
             CAceEnemyB = Config.Bind("AceLabel", "EnemyB", 60, "敌方颜色 B / enemy blue");
             CAceTeamColor = Config.Bind("AceLabel", "TeamColor", true, "按敌我上色；关掉则统一用 R/G/B / colour by team");
+            CAceTextMatchBox = Config.Bind("AceLabel", "TextMatchBox", true, "文字颜色跟目标框一致；0=文字统一用 R/G/B / text matches box colour");
 
             CEnabled.SettingChanged += (s, e) => { _on = CEnabled.Value; L.LogInfo("[GunRing] " + (_on ? "on" : "off") + " (menu)"); };
             CDumpNow.SettingChanged += (s, e) =>
@@ -1423,8 +1426,16 @@ namespace SP2GunRing
 
             bool friendly = TargetIsFriendly();
             Color boxCol = (CAceTeamColor.Value && !friendly) ? Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB) : Rgb(CAceR, CAceG, CAceB);
-            Color textCol = Rgb(CAceR, CAceG, CAceB);
+            Color textCol = CAceTextMatchBox.Value ? boxCol : Rgb(CAceR, CAceG, CAceB);
             float box = Mathf.Max(12f, CAceBoxPx.Value);
+            if (_aceTeamLogged != TargetName)
+            {
+                _aceTeamLogged = TargetName;
+                L.LogInfo("[GunRing] ace draw target=" + TargetName
+                    + " team=" + (_target != null ? _target.TeamId.ToString() : "?")
+                    + " selfTeam=" + (_craft != null ? _craft.TeamId.ToString() : "?")
+                    + " friendly=" + friendly);
+            }
             if (CAceHideVanilla.Value) DrawAceBox(x, y, box, boxCol);
 
             string model = TargetModelName();
