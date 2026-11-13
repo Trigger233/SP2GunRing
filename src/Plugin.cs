@@ -412,6 +412,21 @@ namespace SP2GunRing
         static Target _aceFriendlyTarget;
         static bool _aceFriendlyValue;
         static int _aceAggression = -1;
+        TargetBoxScript[] _aceBoxCache;
+        TargetBoxScriptJuicy[] _aceJuicyCache;
+        float _nextAceBoxScan;
+        Target _aceRelationTarget;
+        int _aceRelationValue;
+        float _aceRelationNext;
+        readonly List<Target> _aceSeen = new List<Target>();
+
+        void RefreshAceBoxCache()
+        {
+            if (Time.unscaledTime < _nextAceBoxScan) return;
+            _nextAceBoxScan = Time.unscaledTime + 0.5f;
+            _aceBoxCache = Resources.FindObjectsOfTypeAll<TargetBoxScript>();
+            _aceJuicyCache = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
+        }
 
         static void RememberFriendly(TrackedTarget tt)
         {
@@ -1440,35 +1455,42 @@ namespace SP2GunRing
             if (_target == null) return false;
             try
             {
-                TargetBoxScript[] boxes = Resources.FindObjectsOfTypeAll<TargetBoxScript>();
-                for (int i = 0; i < boxes.Length; i++)
+                RefreshAceBoxCache();
+                TargetBoxScript[] boxes = _aceBoxCache;
+                if (boxes != null)
                 {
-                    TargetBoxScript b = boxes[i];
-                    if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
-                    TrackedTarget tt = b.TrackedTarget;
-                    bool same = tt.Target == _target;
-                    if (!same && tt.Target.Name == _target.Name)
-                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
-                    if (!same) continue;
-                    _aceFriendlyTarget = _target;
-                    _aceFriendlyValue = tt.IsFriendly;
-                    _aceAggression = (int)tt.AggressionLevel;
-                    return true;
+                    for (int i = 0; i < boxes.Length; i++)
+                    {
+                        TargetBoxScript b = boxes[i];
+                        if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
+                        TrackedTarget tt = b.TrackedTarget;
+                        bool same = tt.Target == _target;
+                        if (!same && tt.Target.Name == _target.Name)
+                            same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
+                        if (!same) continue;
+                        _aceFriendlyTarget = _target;
+                        _aceFriendlyValue = tt.IsFriendly;
+                        _aceAggression = (int)tt.AggressionLevel;
+                        return true;
+                    }
                 }
-                TargetBoxScriptJuicy[] juicy = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
-                for (int i = 0; i < juicy.Length; i++)
+                TargetBoxScriptJuicy[] juicy = _aceJuicyCache;
+                if (juicy != null)
                 {
-                    TargetBoxScriptJuicy b = juicy[i];
-                    if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
-                    TrackedTarget tt = b.TrackedTarget;
-                    bool same = tt.Target == _target;
-                    if (!same && tt.Target.Name == _target.Name)
-                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
-                    if (!same) continue;
-                    _aceFriendlyTarget = _target;
-                    _aceFriendlyValue = tt.IsFriendly;
-                    _aceAggression = (int)tt.AggressionLevel;
-                    return true;
+                    for (int i = 0; i < juicy.Length; i++)
+                    {
+                        TargetBoxScriptJuicy b = juicy[i];
+                        if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
+                        TrackedTarget tt = b.TrackedTarget;
+                        bool same = tt.Target == _target;
+                        if (!same && tt.Target.Name == _target.Name)
+                            same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
+                        if (!same) continue;
+                        _aceFriendlyTarget = _target;
+                        _aceFriendlyValue = tt.IsFriendly;
+                        _aceAggression = (int)tt.AggressionLevel;
+                        return true;
+                    }
                 }
             }
             catch { }
@@ -1485,45 +1507,78 @@ namespace SP2GunRing
                 return _fallback.TeamId == _craft.TeamId ? 3 : 1;
             }
             if (_aceFriendlyTarget == _target && _aceAggression >= 0) return _aceAggression;
-            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) return _aceAggression;
-            if (TryFriendlyFromTargeting(PodSystem())) return _aceAggression;
-            if (TryFriendlyFromBoxes()) return _aceAggression;
-            try { if (_target.Player != null) return _target.Player.TeamId == _craft.TeamId ? 3 : 1; } catch { }
-            return _target.TeamId == _craft.TeamId ? 3 : 1;
+            if (_aceRelationTarget == _target && Time.unscaledTime < _aceRelationNext) return _aceRelationValue;
+
+            int rel;
+            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) rel = _aceAggression;
+            else if (TryFriendlyFromTargeting(PodSystem())) rel = _aceAggression;
+            else if (TryFriendlyFromBoxes()) rel = _aceAggression;
+            else
+            {
+                rel = 2;
+                try { if (_target.Player != null) rel = _target.Player.TeamId == _craft.TeamId ? 3 : 1; else rel = _target.TeamId == _craft.TeamId ? 3 : 1; }
+                catch { rel = _target.TeamId == _craft.TeamId ? 3 : 1; }
+            }
+            _aceRelationTarget = _target;
+            _aceRelationValue = rel;
+            _aceRelationNext = Time.unscaledTime + 0.5f;
+            return rel;
         }
 
-        static void DrawHudLabel(Rect r, string text, GUIStyle style)
+        static void DrawHudLabel(Rect r, string text, GUIStyle style, GUIStyle shadow)
         {
-            Color old = GUI.color;
-            GUIStyle sh = new GUIStyle(style);
-            sh.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
-            GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), text, sh);
-            GUI.color = old;
+            if (shadow != null)
+                GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), text, shadow);
             GUI.Label(r, text, style);
+        }
+
+        GUIStyle _aceDistStyle, _aceNameStyle, _aceDistShadow, _aceNameShadow;
+        bool _aceStylesReady;
+
+        static Texture2D AceBoxTexture(int size)
+        {
+            string key = "acebox:" + size;
+            Texture2D cached;
+            if (_texCache.TryGetValue(key, out cached)) return cached;
+            int s = Mathf.Max(16, size);
+            var t = new Texture2D(s, s, TextureFormat.ARGB32, false);
+            float c = (s - 1) * 0.5f;
+            float arm = Mathf.Max(4f, s * 0.26f);
+            float th = Mathf.Max(1.5f, s * 0.05f);
+            for (int y = 0; y < s; y++)
+            {
+                for (int x = 0; x < s; x++)
+                {
+                    bool on = false;
+                    // 四个角 L 形
+                    if ((x <= arm && y <= th) || (x <= th && y <= arm)) on = true;
+                    if ((x >= s - arm && y <= th) || (x >= s - th && y <= arm)) on = true;
+                    if ((x <= arm && y >= s - th) || (x <= th && y >= s - arm)) on = true;
+                    if ((x >= s - arm && y >= s - th) || (x >= s - th && y >= s - arm)) on = true;
+                    float dx = x - c, dy = y - c;
+                    if (dx * dx + dy * dy <= 4f) on = true; // 中心点
+                    t.SetPixel(x, y, new Color(1f, 1f, 1f, on ? 1f : 0f));
+                }
+            }
+            t.filterMode = FilterMode.Bilinear;
+            t.Apply();
+            _texCache[key] = t;
+            return t;
         }
 
         static void DrawAceBox(float x, float y, float size, Color col)
         {
             Color old = GUI.color;
             GUI.color = col;
-            float h = size * 0.5f;
-            float arm = Mathf.Max(4f, size * 0.26f);
-            float th = Mathf.Max(1.5f, size * 0.05f);
-            GUI.DrawTexture(new Rect(x - h, y - h, arm, th), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x - h, y - h, th, arm), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x + h - arm, y - h, arm, th), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x + h - th, y - h, th, arm), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x - h, y + h - th, arm, th), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x - h, y + h - arm, th, arm), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x + h - arm, y + h - th, arm, th), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x + h - th, y + h - arm, th, arm), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(x - 1.5f, y - 1.5f, 3f, 3f), Texture2D.whiteTexture);
+            int px = Mathf.Max(16, Mathf.RoundToInt(size));
+            GUI.DrawTexture(new Rect(x - px * 0.5f, y - px * 0.5f, px, px), AceBoxTexture(px));
             GUI.color = old;
         }
 
         void DrawAceLabel(Camera cam)
         {
             if (!CAceLabel.Value || _craft == null || !AimingModeOn()) return;
+            if (Event.current != null && Event.current.type != EventType.Repaint) return;
 
             bool selectedVisible = true;
             if (_target != null && CAceBlink.Value)
@@ -1542,28 +1597,36 @@ namespace SP2GunRing
 
         void DrawOtherAceBoxes(Camera cam)
         {
-            HashSet<Target> seen = new HashSet<Target>();
-            TargetBoxScript[] boxes = Resources.FindObjectsOfTypeAll<TargetBoxScript>();
-            for (int i = 0; i < boxes.Length; i++)
+            RefreshAceBoxCache();
+            _aceSeen.Clear();
+            TargetBoxScript[] boxes = _aceBoxCache;
+            if (boxes != null)
             {
-                if (boxes[i] == null || boxes[i].TrackedTarget == null) continue;
-                DrawOtherAceBox(cam, boxes[i].TrackedTarget, seen);
+                for (int i = 0; i < boxes.Length; i++)
+                {
+                    if (boxes[i] == null || boxes[i].TrackedTarget == null) continue;
+                    DrawOtherAceBox(cam, boxes[i].TrackedTarget, _aceSeen);
+                }
             }
-            TargetBoxScriptJuicy[] juicy = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
-            for (int i = 0; i < juicy.Length; i++)
+            TargetBoxScriptJuicy[] juicy = _aceJuicyCache;
+            if (juicy != null)
             {
-                if (juicy[i] == null || juicy[i].TrackedTarget == null) continue;
-                DrawOtherAceBox(cam, juicy[i].TrackedTarget, seen);
+                for (int i = 0; i < juicy.Length; i++)
+                {
+                    if (juicy[i] == null || juicy[i].TrackedTarget == null) continue;
+                    DrawOtherAceBox(cam, juicy[i].TrackedTarget, _aceSeen);
+                }
             }
         }
 
-        void DrawOtherAceBox(Camera cam, TrackedTarget tt, HashSet<Target> seen)
+        void DrawOtherAceBox(Camera cam, TrackedTarget tt, List<Target> seen)
         {
             if (tt == null || tt.Target == null || tt.Target.IsDead) return;
             Target t = tt.Target;
             if (t == _target) return;
             try { if (t.Player != null && t.Player.Aircraft == _craft) return; } catch { }
-            if (!seen.Add(t)) return;
+            if (seen.Contains(t)) return;
+            seen.Add(t);
             Vector3 sp = cam.WorldToScreenPoint(t.Position);
             if (sp.z <= 0f) return;
             float x = sp.x, y = Screen.height - sp.y;
@@ -1606,26 +1669,36 @@ namespace SP2GunRing
 
             int dPx = Mathf.Max(8, CAceDistPx.Value);
             int nPx = Mathf.Max(8, CAceNamePx.Value);
-            GUIStyle ds = new GUIStyle(GUI.skin.label);
-            ds.fontSize = dPx; ds.fontStyle = FontStyle.Bold; ds.alignment = TextAnchor.UpperLeft; ds.wordWrap = false;
-            ds.normal.textColor = textCol;
-            GUIStyle ns = new GUIStyle(GUI.skin.label);
-            ns.fontSize = nPx; ns.fontStyle = FontStyle.Bold; ns.alignment = TextAnchor.UpperLeft; ns.wordWrap = false;
-            ns.normal.textColor = textCol;
+            if (!_aceStylesReady)
+            {
+                _aceStylesReady = true;
+                _aceDistStyle = new GUIStyle(GUI.skin.label);
+                _aceNameStyle = new GUIStyle(GUI.skin.label);
+                _aceDistStyle.fontStyle = FontStyle.Bold; _aceDistStyle.alignment = TextAnchor.UpperLeft; _aceDistStyle.wordWrap = false;
+                _aceNameStyle.fontStyle = FontStyle.Bold; _aceNameStyle.alignment = TextAnchor.UpperLeft; _aceNameStyle.wordWrap = false;
+                _aceDistShadow = new GUIStyle(_aceDistStyle);
+                _aceNameShadow = new GUIStyle(_aceNameStyle);
+                _aceDistShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+                _aceNameShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            }
+            _aceDistStyle.fontSize = dPx; _aceDistStyle.normal.textColor = textCol;
+            _aceNameStyle.fontSize = nPx; _aceNameStyle.normal.textColor = textCol;
+            _aceDistShadow.fontSize = dPx;
+            _aceNameShadow.fontSize = nPx;
 
             // 按实际文字宽度给足空间，避免长名字被 260px 的 Rect 截断
             float textW = 160f;
-            textW = Mathf.Max(textW, ds.CalcSize(new GUIContent(dist)).x);
-            textW = Mathf.Max(textW, ns.CalcSize(new GUIContent(model)).x);
-            textW = Mathf.Max(textW, ns.CalcSize(new GUIContent(op)).x);
+            textW = Mathf.Max(textW, _aceDistStyle.CalcSize(new GUIContent(dist)).x);
+            textW = Mathf.Max(textW, _aceNameStyle.CalcSize(new GUIContent(model)).x);
+            textW = Mathf.Max(textW, _aceNameStyle.CalcSize(new GUIContent(op)).x);
             textW = Mathf.Min(Screen.width - 16f, textW + 16f);
             float left = x + box * 0.5f + 8f;
             if (left + textW > Screen.width - 8f) left = x - box * 0.5f - 8f - textW;
             if (left < 8f) left = 8f;
             float top = y - box * 0.5f - 2f;
-            DrawHudLabel(new Rect(left, top, textW, dPx + 4f), dist, ds);
-            DrawHudLabel(new Rect(left, top + dPx + 2f, textW, nPx + 4f), model, ns);
-            DrawHudLabel(new Rect(left, top + dPx + nPx + 5f, textW, nPx + 4f), op, ns);
+            DrawHudLabel(new Rect(left, top, textW, dPx + 4f), dist, _aceDistStyle, _aceDistShadow);
+            DrawHudLabel(new Rect(left, top + dPx + 2f, textW, nPx + 4f), model, _aceNameStyle, _aceNameShadow);
+            DrawHudLabel(new Rect(left, top + dPx + nPx + 5f, textW, nPx + 4f), op, _aceNameStyle, _aceNameShadow);
         }
 
         void DrawCannon(Camera cam)
