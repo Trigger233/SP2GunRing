@@ -179,6 +179,8 @@ namespace SP2GunRing
         static ConfigEntry<int> CAceEnemyR, CAceEnemyG, CAceEnemyB;
         static ConfigEntry<bool> CAceTeamColor;
         static ConfigEntry<bool> CAceTextMatchBox;
+        static ConfigEntry<bool> CAceBlink;
+        static ConfigEntry<int> CAceBlinkHz;
 
         bool _on = true;
         internal static GunRingPlugin Instance;
@@ -317,15 +319,26 @@ namespace SP2GunRing
             catch { }
         }
 
+        internal static bool AimingModeOn()
+        {
+            GunRingPlugin p = Instance;
+            if (p == null || p._craft == null) return false;
+            try
+            {
+                TargetingSystem ts = p._craft.TargetingSystem;
+                return ts != null && (int)ts.Mode != 0;
+            }
+            catch { return false; }
+        }
+
         internal static void OnTargetBoxJuicy(TargetBoxScriptJuicy box)
         {
             try
             {
-                if (box == null || !CAceLabel.Value || Instance == null) return;
+                if (box == null || !CAceLabel.Value || Instance == null || !AimingModeOn()) return;
                 TrackedTarget tt = box.TrackedTarget;
                 if (tt == null || tt.Target == null) return;
-                if (tt.Target != Instance._target) return;
-                RememberFriendly(tt);
+                if (tt.Target == Instance._target) RememberFriendly(tt);
                 HideFieldComponent(_jDistField, box);
                 HideFieldComponent(_jNameField, box);
                 if (CAceHideVanilla.Value)
@@ -333,7 +346,7 @@ namespace SP2GunRing
                     HideFieldComponent(_jSpriteField, box);
                     HideFieldComponent(_jLockField, box);
                 }
-                if (!_aceBoxLogged)
+                if (tt.Target == Instance._target && !_aceBoxLogged)
                 {
                     _aceBoxLogged = true;
                     L.LogInfo("[GunRing] ace label active target=" + tt.Target.Name);
@@ -346,11 +359,10 @@ namespace SP2GunRing
         {
             try
             {
-                if (box == null || !CAceLabel.Value || Instance == null) return;
+                if (box == null || !CAceLabel.Value || Instance == null || !AimingModeOn()) return;
                 TrackedTarget tt = box.TrackedTarget;
                 if (tt == null || tt.Target == null) return;
-                if (tt.Target != Instance._target) return;
-                RememberFriendly(tt);
+                if (tt.Target == Instance._target) RememberFriendly(tt);
                 if (_boxDistProp != null)
                 {
                     GameObject go = _boxDistProp.GetValue(box, null) as GameObject;
@@ -363,7 +375,7 @@ namespace SP2GunRing
                 }
                 if (CAceHideVanilla.Value && _boxSpriteProp != null)
                     _boxSpriteProp.SetValue(box, false, null);
-                if (!_aceBoxLogged)
+                if (tt.Target == Instance._target && !_aceBoxLogged)
                 {
                     _aceBoxLogged = true;
                     L.LogInfo("[GunRing] ace label active target=" + tt.Target.Name);
@@ -558,6 +570,8 @@ namespace SP2GunRing
             CAceEnemyB = Config.Bind("AceLabel", "EnemyB", 60, "敌方颜色 B / enemy blue");
             CAceTeamColor = Config.Bind("AceLabel", "TeamColor", true, "按敌我上色；关掉则统一用 R/G/B / colour by team");
             CAceTextMatchBox = Config.Bind("AceLabel", "TextMatchBox", true, "文字颜色跟目标框一致；0=文字统一用 R/G/B / text matches box colour");
+            CAceBlink = Config.Bind("AceLabel", "Blink", true, "锁定目标闪烁 / blink the selected target");
+            CAceBlinkHz = Config.Bind("AceLabel", "BlinkHz", 2, new ConfigDescription("闪烁频率(Hz)，离散开关不渐变 / blink rate in Hz", new AcceptableValueRange<int>(1, 10)));
 
             CEnabled.SettingChanged += (s, e) => { _on = CEnabled.Value; L.LogInfo("[GunRing] " + (_on ? "on" : "off") + " (menu)"); };
             CDumpNow.SettingChanged += (s, e) =>
@@ -1509,7 +1523,58 @@ namespace SP2GunRing
 
         void DrawAceLabel(Camera cam)
         {
-            if (!CAceLabel.Value || _craft == null || !HasTarget) return;
+            if (!CAceLabel.Value || _craft == null || !AimingModeOn()) return;
+
+            bool selectedVisible = true;
+            if (_target != null && CAceBlink.Value)
+                selectedVisible = Mathf.Repeat(Time.unscaledTime * Mathf.Max(1, CAceBlinkHz.Value), 1f) < 0.5f;
+            if (HasTarget && selectedVisible) DrawSelectedAceLabel(cam);
+            if (CAceHideVanilla.Value) DrawOtherAceBoxes(cam);
+        }
+
+        Color RelationColor(int relation)
+        {
+            if (!CAceTeamColor.Value) return Rgb(CAceR, CAceG, CAceB);
+            if (relation == 3) return Rgb(CAceFriendR, CAceFriendG, CAceFriendB);
+            if (relation == 1) return Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB);
+            return Rgb(CAceR, CAceG, CAceB);
+        }
+
+        void DrawOtherAceBoxes(Camera cam)
+        {
+            HashSet<Target> seen = new HashSet<Target>();
+            TargetBoxScript[] boxes = Resources.FindObjectsOfTypeAll<TargetBoxScript>();
+            for (int i = 0; i < boxes.Length; i++)
+            {
+                if (boxes[i] == null || boxes[i].TrackedTarget == null) continue;
+                DrawOtherAceBox(cam, boxes[i].TrackedTarget, seen);
+            }
+            TargetBoxScriptJuicy[] juicy = Resources.FindObjectsOfTypeAll<TargetBoxScriptJuicy>();
+            for (int i = 0; i < juicy.Length; i++)
+            {
+                if (juicy[i] == null || juicy[i].TrackedTarget == null) continue;
+                DrawOtherAceBox(cam, juicy[i].TrackedTarget, seen);
+            }
+        }
+
+        void DrawOtherAceBox(Camera cam, TrackedTarget tt, HashSet<Target> seen)
+        {
+            if (tt == null || tt.Target == null || tt.Target.IsDead) return;
+            Target t = tt.Target;
+            if (t == _target) return;
+            try { if (t.Player != null && t.Player.Aircraft == _craft) return; } catch { }
+            if (!seen.Add(t)) return;
+            Vector3 sp = cam.WorldToScreenPoint(t.Position);
+            if (sp.z <= 0f) return;
+            float x = sp.x, y = Screen.height - sp.y;
+            if (x < -200f || x > Screen.width + 200f || y < -200f || y > Screen.height + 200f) return;
+            float box = Mathf.Max(10f, CAceBoxPx.Value * 0.8f);
+            DrawAceBox(x, y, box, RelationColor((int)tt.AggressionLevel));
+        }
+
+        void DrawSelectedAceLabel(Camera cam)
+        {
+            if (_craft == null || !HasTarget) return;
             Vector3 world = TargetPos;
             Vector3 sp = cam.WorldToScreenPoint(world);
             if (sp.z <= 0f) return;
@@ -1518,11 +1583,7 @@ namespace SP2GunRing
 
             int relation = TargetRelation();
             bool friendly = relation == 3;
-            Color boxCol;
-            if (!CAceTeamColor.Value) boxCol = Rgb(CAceR, CAceG, CAceB);
-            else if (relation == 3) boxCol = Rgb(CAceFriendR, CAceFriendG, CAceFriendB);
-            else if (relation == 1) boxCol = Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB);
-            else boxCol = Rgb(CAceR, CAceG, CAceB); // Neutral / Unknown = green
+            Color boxCol = RelationColor(relation);
             Color textCol = CAceTextMatchBox.Value ? boxCol : Rgb(CAceR, CAceG, CAceB);
             float box = Mathf.Max(12f, CAceBoxPx.Value);
             if (_aceTeamLogged != TargetName)
