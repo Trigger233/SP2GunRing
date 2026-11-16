@@ -12,8 +12,9 @@ $token = ($cred | Where-Object { $_ -like "password=*" }) -replace "^password=",
 if ([string]::IsNullOrWhiteSpace($token)) { "NO_TOKEN"; exit }
 $headers = @{ Authorization = "token $token"; "User-Agent" = "sp2-gunring-release"; Accept = "application/vnd.github+json" }
 $body = @{ tag_name = $version; target_commitish = "main"; name = "SP2 Gun Lead Ring v0.12.4 - 16-tick reticle + aim assist"; body = $desc; draft = $false; prerelease = $false } | ConvertTo-Json
+$bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
 try {
-  $rel = Invoke-RestMethod -Uri ("https://api.github.com/repos/" + $repo + "/releases") -Method Post -Headers $headers -Body $body -ContentType "application/json" -TimeoutSec 60
+  $rel = Invoke-RestMethod -Uri ("https://api.github.com/repos/" + $repo + "/releases") -Method Post -Headers $headers -Body $bodyBytes -ContentType "application/json; charset=utf-8" -TimeoutSec 60
   "release created: " + $rel.html_url
   $assetName = "SP2GunRing-v0.12.4.zip"
   $upUrl = "https://uploads.github.com/repos/" + $repo + "/releases/" + $rel.id + "/assets?name=" + $assetName
