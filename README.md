@@ -26,15 +26,17 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - Hit feedback: FPS-style X made of four non-crossing segments, a configurable HIT label above it and hit.wav
 - Works for both networked players and local AI aircraft (single-player included)
 - 4 reticle styles, colours, size, search range all configurable
+- Optional 1:1 roll rotation of the reticles with the player aircraft (v0.10.0)
+- Optional aim assist (v0.11.0, PID since v0.12.0): within `ToggleAssist` degrees, separate pitch/yaw PID controllers nudge Pitch/Yaw toward the lead point; integrated output is clamped to ±1, then blended with input and clamped to ±1
 - Integrates with Gravy Mod Menu
 - Runtime-only plugin, no game files modified
 
 ## 安装 / Install
 
 1. 游戏自带 BepInEx 5.4.x，无需另装 / The game ships with BepInEx, nothing else to install
-2. 下载 `bin/SP2GunRing-v0.9.0.zip`，解压到游戏根目录合并覆盖：
+2. 下载 `bin/SP2GunRing-v0.12.4.zip`，解压到游戏根目录合并覆盖：
    `...\steamapps\common\SimplePlanes 2\`
-   Download `bin/SP2GunRing-v0.9.0.zip` and extract it into the game root folder
+   Download `bin/SP2GunRing-v0.12.4.zip` and extract it into the game root folder
 3. 启动游戏，进入飞行场景即可 / Launch the game and enter a flight scene
 
 ## 用法 / Usage
@@ -87,13 +89,20 @@ Ace Combat style target label (v0.9.0):
 | | `MaxRange` | 目标搜索半径 (m) |
 | | `MaxAngle` | 搜索锥角 (度) |
 | Visual | `Mode` | 0=Pinned 环贴准心 / 1=Lead 环画在提前量点（并显示机炮指向准心） |
-| | `Style` | 0=六条线 1=四条线 2=虚线圈 3=实心圆 |
+| | `Style` | 0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十六条线 |
 | | `RingRadiusPx` | 环基础尺寸（像素，散布环更大时以散布为准） |
 | | `MaxOffsetPx` | Pinned 模式环离准心最远像素，0=不限 |
 | | `ShowLine` | 1/0 准心到环的连线 |
 | | `ShowGunCross` | 1/0 Lead 模式下的机炮指向准心 |
 | | `RingFollowsSpread` | 1/0 环大小随机炮散布自动放大（默认 1） |
+| | `RollRotation` | 1/0 机炮环/炮弹环随玩家飞机滚转 1:1（默认 0） |
 | | `SpreadScale` | 散布环缩放百分比 50-400 |
+| Assist | `Assist` | 1/0 辅助瞄准总开关 |
+| | `ToggleAssist` | 预瞄环与机头夹角小于该角度(度)时介入，默认 5 |
+| | `Mix` | 吸附混合比例 0-1，默认 0.35 |
+| | `Mode` | 0=总是启用 1=只在按住开火时启用 |
+| | `PitchP` / `PitchD` / `PitchI` | 俯仰 PID 增益，默认 1.2 / 0.2 / 0.05 |
+| | `YawP` / `YawD` / `YawI` | 偏航 PID 增益，默认 1.2 / 0.2 / 0.05 |
 | | `GreenAngle` | 机头与提前量点夹角 ≤ 该值（度）时变「可开火色」 |
 | | `DebugDraw` | 1/0 调试标记与数值 |
 | Color | `IdleR/G/B`、`ReadyR/G/B`、`ClampedR/G/B` | 三态颜色，各 0-255 |

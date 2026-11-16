@@ -116,7 +116,7 @@ namespace SP2GunRing
         }
     }
 
-    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.9.0")]
+    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.12.4")]
     public class GunRingPlugin : BaseUnityPlugin
     {
         // Gravy Mod Menu 会扫每个插件的静态字符串字段 GravyMenuTab，
@@ -146,6 +146,17 @@ namespace SP2GunRing
         static ConfigEntry<bool> CGunCross;
         static ConfigEntry<bool> CRingFollowsSpread;
         static ConfigEntry<int> CSpreadScale;
+        static ConfigEntry<bool> CRollRotation;
+        static ConfigEntry<bool> CAssistEnabled;
+        static ConfigEntry<float> CToggleAssist;
+        static ConfigEntry<float> CAssistMix;
+        static ConfigEntry<int> CAssistMode;
+        static ConfigEntry<float> CAssistPitchP;
+        static ConfigEntry<float> CAssistPitchD;
+        static ConfigEntry<float> CAssistPitchI;
+        static ConfigEntry<float> CAssistYawP;
+        static ConfigEntry<float> CAssistYawD;
+        static ConfigEntry<float> CAssistYawI;
         static ConfigEntry<bool> COnlySelected;
 
 
@@ -522,7 +533,7 @@ namespace SP2GunRing
             CMaxRange = Config.Bind("General", "MaxRange", 4000f, "只看这个距离内的目标 / max target range (m)");
             CMaxAngle = Config.Bind("General", "MaxAngle", 25f, "目标偏离机头多少度内才选中 / selection cone (deg)");
             CRingPx = Config.Bind("Visual", "RingRadiusPx", 14f, "准心尺寸(像素) / reticle size in px");
-            CStyle = Config.Bind("Visual", "Style", 0, new ConfigDescription("0=六条线 1=四条线 2=虚线圈 3=实心圆 / reticle style", new AcceptableValueRange<int>(0, 3)));
+            CStyle = Config.Bind("Visual", "Style", 0, new ConfigDescription("0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十六条线 / reticle style", new AcceptableValueRange<int>(0, 4)));
             CDebugDraw = Config.Bind("Visual", "DebugDraw", true, "画出目标位置(蓝)与数值，排错用 / draw target marker + numbers");
             CModeInt = Config.Bind("Visual", "Mode", 0, new ConfigDescription("0=环钉在准心旁 1=环画在提前量点(额外显示机炮指向准心) / ring placement mode", new AcceptableValueRange<int>(0, 1)));
             CMaxOffsetPx = Config.Bind("Visual", "MaxOffsetPx", 0, "Pinned 模式下环离准心最远的像素距离，0=不限（默认不限，避免环被吸在固定半径上）/ max pixel offset from crosshair, 0 = unlimited");
@@ -539,6 +550,20 @@ namespace SP2GunRing
             CAlpha = Config.Bind("Color", "Alpha", 240, "整体不透明度 0-255 / alpha");
             CGunCross = Config.Bind("Visual", "ShowGunCross", true, "Lead 模式下额外画一个准心显示当前机炮指向 / draw gun-direction cross in Lead mode");
             CRingFollowsSpread = Config.Bind("Visual", "RingFollowsSpread", true, "环大小随机炮散布自动放大(散布/初速) / scale ring with gun dispersion");
+            CRollRotation = Config.Bind("Visual", "RollRotation", false, "机炮环/炮弹环随玩家飞机滚转 1:1 / rotate reticles with aircraft roll 1:1");
+            CAssistEnabled = Config.Bind("Assist", "Assist", true, "辅助瞄准总开关 / aim assist on/off");
+            CToggleAssist = Config.Bind("Assist", "ToggleAssist", 5f, new ConfigDescription("预瞄环与机头夹角小于该角度(度)时介入 / engage assist within this angle (deg)", new AcceptableValueRange<float>(0f, 45f)));
+            CAssistMix = Config.Bind("Assist", "Mix", 0.35f, new ConfigDescription("吸附混合比例 0-1，最终 Pitch/Yaw 仍会夹到 ±1 / assist blend 0-1", new AcceptableValueRange<float>(0f, 1f)));
+            CAssistMode = Config.Bind("Assist", "Mode", 0, new ConfigDescription("0=总是启用 1=只在按住开火(FireGuns)时启用 / 0=always, 1=only while firing", new AcceptableValueRange<int>(0, 1)));
+            CAssistPitchP = Config.Bind("Assist", "PitchP", 1.2f, new ConfigDescription("俯仰 P 增益 / pitch proportional gain", new AcceptableValueRange<float>(0f, 10f)));
+            CAssistPitchD = Config.Bind("Assist", "PitchD", 0.2f, new ConfigDescription("俯仰 D 增益 / pitch derivative gain", new AcceptableValueRange<float>(0f, 5f)));
+            CAssistPitchI = Config.Bind("Assist", "PitchI", 0.05f, new ConfigDescription("俯仰 I 增益（积分输出限制 ±1）/ pitch integral gain, output clamped to ±1", new AcceptableValueRange<float>(0f, 5f)));
+            CAssistYawP = Config.Bind("Assist", "YawP", 1.2f, new ConfigDescription("偏航 P 增益 / yaw proportional gain", new AcceptableValueRange<float>(0f, 10f)));
+            CAssistYawD = Config.Bind("Assist", "YawD", 0.2f, new ConfigDescription("偏航 D 增益 / yaw derivative gain", new AcceptableValueRange<float>(0f, 5f)));
+            CAssistYawI = Config.Bind("Assist", "YawI", 0.05f, new ConfigDescription("偏航 I 增益（积分输出限制 ±1）/ yaw integral gain, output clamped to ±1", new AcceptableValueRange<float>(0f, 5f)));
+            // 只在设置改变时清积分，不在每帧反复清；避免调参时出现突兀的跳变
+            CAssistPitchI.SettingChanged += (s, e) => { _assistIntPitch = 0f; };
+            CAssistYawI.SettingChanged += (s, e) => { _assistIntYaw = 0f; };
             CSpreadScale = Config.Bind("Visual", "SpreadScale", 100, new ConfigDescription("散布环缩放百分比 50-400 / dispersion ring scale %", new AcceptableValueRange<int>(50, 400)));
             CGreenAngle = Config.Bind("Visual", "GreenAngle", 2.5f, "变绿条件：机头与提前量点夹角≤该角度(度) / turn green when aim error <= this many degrees");
             COnlySelected = Config.Bind("General", "OnlyWhenSelected", true, "只在你自己锁定/选中目标时显示，没锁就不画 / only draw when you have a locked target");
@@ -647,6 +672,7 @@ namespace SP2GunRing
                 case 1: return "FourTick";
                 case 2: return "DashedRing";
                 case 3: return "Ring";
+                case 4: return "SixteenTick";
                 default: return "SixTick";
             }
         }
@@ -726,6 +752,33 @@ namespace SP2GunRing
                         t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
                     }
             }
+            else if (style == "SixteenTick")
+            {
+                // 中心点 + 16 根线（每 22.5° 一根），中间留空
+                float dot16 = Mathf.Max(1.2f, s * 0.038f);
+                float rIn16 = s * 0.22f, rOut16 = c * 0.94f;
+                float halfW16 = Mathf.Max(0.65f, s * 0.016f);
+                for (int y = 0; y < s; y++)
+                    for (int x = 0; x < s; x++)
+                    {
+                        float dx = x - c, dy = y - c;
+                        float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                        float a = 0f;
+                        if (dist <= dot16) a = 1f;
+                        else if (dist >= rIn16 && dist <= rOut16)
+                        {
+                            for (int k = 0; k < 16; k++)
+                            {
+                                float ang = k * Mathf.PI / 8f;
+                                float px = Mathf.Cos(ang), py = Mathf.Sin(ang);
+                                float along = dx * px + dy * py;
+                                float across = Mathf.Abs(-dx * py + dy * px);
+                                if (along > 0f && across <= halfW16) { a = 1f; break; }
+                            }
+                        }
+                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+                    }
+            }
             else
             {
                 // SixTick: 中心点 + 6 根线（0/60/120/180/240/300 度），中间留空
@@ -771,6 +824,101 @@ namespace SP2GunRing
             if (_craft == null || !HasTarget) return;
             SolveLead();
             WatchTargetDamage();
+        }
+
+        // 辅助瞄准：把预瞄点误差换算到飞机坐标系，Pitch/Yaw 各自 PID，
+        // 叠加到玩家输入上，最后仍夹在 ±1。LateUpdate 做，尽量不抢玩家原始输入。
+        float _lastAssistYaw, _lastAssistPitch;
+        float _assistIntYaw, _assistIntPitch;
+        float _lastAssistRoll = 9999f;
+        void LateUpdate()
+        {
+            if (!_on || !CAssistEnabled.Value || _craft == null || !HasTarget)
+            {
+                _lastAssistYaw = _lastAssistPitch = 0f;
+                _assistIntYaw = _assistIntPitch = 0f;
+                _lastAssistRoll = 9999f;
+                return;
+            }
+            try
+            {
+                if (!_craft.IsPrimaryLocalPlayer) return;
+                float gate = Mathf.Clamp(CToggleAssist.Value, 0f, 45f);
+                if (gate <= 0f || _angleToLead > gate)
+                {
+                    _lastAssistYaw = _lastAssistPitch = 0f;
+                    _assistIntYaw = _assistIntPitch = 0f;
+                    _lastAssistRoll = 9999f;
+                    return;
+                }
+                AircraftControls ctl = _craft.Controls;
+                if (ctl == null) return;
+                if (CAssistMode.Value == 1 && !ctl.FireGuns)
+                {
+                    _lastAssistYaw = _lastAssistPitch = 0f;
+                    _assistIntYaw = _assistIntPitch = 0f;
+                    _lastAssistRoll = 9999f;
+                    return;
+                }
+
+                Vector3 toLead = _lead - MuzzlePos();
+                if (toLead.sqrMagnitude < 1f) return;
+                Vector3 local = CraftXform().InverseTransformDirection(toLead.normalized);
+
+                // 飞机坐标系：x=右，y=上，z=前
+                float yawErr = Mathf.Atan2(local.x, local.z);
+                // 游戏里 Pitch 轴的符号与机体系 y 相反，这里取反让吸附往目标方向推
+                float pitchErr = -Mathf.Atan2(local.y, Mathf.Sqrt(local.x * local.x + local.z * local.z));
+                float dt = Mathf.Max(0.001f, Time.deltaTime);
+                float yawD = (yawErr - _lastAssistYaw) / dt;
+                float pitchD = (pitchErr - _lastAssistPitch) / dt;
+                _lastAssistYaw = yawErr;
+                _lastAssistPitch = pitchErr;
+
+                // 滚转时把积分向量从旧机体坐标转到新机体坐标，否则会沿旧轴推杆
+                float rollNow = CraftRollDeg();
+                if (_lastAssistRoll > 9998f) _lastAssistRoll = rollNow;
+                else
+                {
+                    float dRoll = Mathf.DeltaAngle(_lastAssistRoll, rollNow);
+                    if (Mathf.Abs(dRoll) > 0.001f && Mathf.Abs(dRoll) < 45f)
+                    {
+                        float rad = -dRoll * Mathf.Deg2Rad;
+                        float cs = Mathf.Cos(rad);
+                        float sn = Mathf.Sin(rad);
+                        float ny = _assistIntYaw * cs - _assistIntPitch * sn;
+                        float np = _assistIntYaw * sn + _assistIntPitch * cs;
+                        _assistIntYaw = ny;
+                        _assistIntPitch = np;
+                    }
+                    _lastAssistRoll = rollNow;
+                }
+
+                // 积分器：I 值改变时由 SettingChanged 清空；输出限制在 [-1,1]
+                float yawI = CAssistYawI.Value;
+                if (yawI > 0.0001f)
+                {
+                    float lim = 1f / yawI;
+                    _assistIntYaw = Mathf.Clamp(_assistIntYaw + yawErr * dt, -lim, lim);
+                }
+                float pitchI = CAssistPitchI.Value;
+                if (pitchI > 0.0001f)
+                {
+                    float lim = 1f / pitchI;
+                    _assistIntPitch = Mathf.Clamp(_assistIntPitch + pitchErr * dt, -lim, lim);
+                }
+
+                float iy = yawI > 0.0001f ? Mathf.Clamp(yawI * _assistIntYaw, -1f, 1f) : 0f;
+                float ip = pitchI > 0.0001f ? Mathf.Clamp(pitchI * _assistIntPitch, -1f, 1f) : 0f;
+                float ay = Mathf.Clamp(CAssistYawP.Value * yawErr + CAssistYawD.Value * yawD + iy, -1f, 1f);
+                float ap = Mathf.Clamp(CAssistPitchP.Value * pitchErr + CAssistPitchD.Value * pitchD + ip, -1f, 1f);
+                float mix = Mathf.Clamp01(CAssistMix.Value);
+
+                // 混合：在玩家当前输入上叠加，绝对值最终不超过 1
+                ctl.Yaw = Mathf.Clamp(ctl.Yaw + ay * mix, -1f, 1f);
+                ctl.Pitch = Mathf.Clamp(ctl.Pitch + ap * mix, -1f, 1f);
+            }
+            catch { }
         }
 
         // 直接盯锁定目标的机体血量：只要它在掉，就说明我们打中了。
@@ -1122,6 +1270,21 @@ namespace SP2GunRing
             }
             catch { }
             return _craft.transform;
+        }
+
+        // 飞机相对世界地平线的滚转角，绕机头轴算；用于把机炮环按 1:1 跟着滚
+        float CraftRollDeg()
+        {
+            try
+            {
+                Transform tr = CraftXform();
+                Vector3 f = tr.forward;
+                Vector3 refUp = Vector3.ProjectOnPlane(Vector3.up, f);
+                Vector3 up = Vector3.ProjectOnPlane(tr.up, f);
+                if (refUp.sqrMagnitude < 0.0001f || up.sqrMagnitude < 0.0001f) return 0f;
+                return -Vector3.SignedAngle(refUp.normalized, up.normalized, f);
+            }
+            catch { return 0f; }
         }
 
         Vector3 CraftPos()
@@ -1762,7 +1925,10 @@ namespace SP2GunRing
             if (noTarget) col.a *= 0.7f;
             Color old = GUI.color;
             GUI.color = col;
+            Matrix4x4 mtx = GUI.matrix;
+            if (CRollRotation.Value) GUIUtility.RotateAroundPivot(CraftRollDeg(), new Vector2(x, y));
             GUI.DrawTexture(new Rect(x - radius, y - radius, px, px), Reticle(StyleName(), px));
+            GUI.matrix = mtx;
 
             if (CCannonTrace.Value)
             {
@@ -1897,7 +2063,10 @@ namespace SP2GunRing
 
             GUI.color = clamped ? Rgb(CClampR, CClampG, CClampB)
                                  : (good ? Rgb(CReadyR, CReadyG, CReadyB) : Rgb(CIdleR, CIdleG, CIdleB));
+            Matrix4x4 ringMtx = GUI.matrix;
+            if (CRollRotation.Value) GUIUtility.RotateAroundPivot(CraftRollDeg(), new Vector2(x, y));
             GUI.DrawTexture(new Rect(x - radius, y - radius, px, px), Reticle(StyleName(), px));
+            GUI.matrix = ringMtx;
             GUI.color = old;
 
             // 命中反馈：4 条短线围一个空心 X（中间不交错，像 FPS 的 hitmarker）+ 上方 Hit 字样
