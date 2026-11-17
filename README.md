@@ -28,15 +28,38 @@ A gun lead indicator + cannon ballistic predictor for SimplePlanes 2 (BepInEx / 
 - 4 reticle styles, colours, size, search range all configurable
 - Optional 1:1 roll rotation of the reticles with the player aircraft (v0.10.0)
 - Optional aim assist (v0.11.0, PID since v0.12.0): within `ToggleAssist` degrees, separate pitch/yaw PID controllers nudge Pitch/Yaw toward the lead point; integrated output is clamped to ±1, then blended with input and clamped to ±1
+- Ace Combat style reticle (`Style=5`, v0.13.0): large ring with 8 outer teeth; inner predicted-time arc removed in v0.13.2
+- Target box is a pure rectangular frame; the static 45-degree inner square appears after lock is complete
+- Aim assist now computes the error between the gun bore and the lead point, so machine-gun mounting deflection is included (v0.13.6)
+- Roll assist added as PD only, no integrator (`Assist/RollP`, `Assist/RollD`, v0.13.7)
+- Assist sensitivity scaling `clamp01((IAS/TAS) / max(IAS,100)^2 * k)` with `k = SpeedRef^2`; default `SpeedRef=200 m/s` gives scale 1 at 200 m/s (v0.13.8)
+- Aim assist is disabled whenever the targeting/aiming mode is off (v0.13.9)
+- Local-player name blacklist at the top of `Plugin.cs`; a matching player gets a blocking message and all plugin features are disabled (v0.13.9)
+- Gun ring target filter uses predicted flight time < machine-gun bullet lifetime (v0.13.0); cannon ring unchanged
 - Integrates with Gravy Mod Menu
 - Runtime-only plugin, no game files modified
+
+## Source layout / 源码模块
+
+`src/` is split into partial-class files so each feature can be edited independently:
+
+| File | Responsibility |
+|---|---|
+| `Plugin.cs` | lifecycle, Gravy config, target scan, lead, hit feedback |
+| `Blacklist.cs` | player blacklist and ban screen |
+| `AceLabel.cs` | Ace Combat labels, rectangular target box, 45° lock square |
+| `Reticle.cs` | gun reticle textures/styles (including Ace ring) |
+| `Cannon.cs` | cannon ballistic ring and solver |
+| `Assist.cs` | aim assist (Pitch/Yaw PID, Roll PD, gun offset, speed scaling) |
+
+Build compiles every `src/*.cs`; edit the feature file and run `build.cmd`.
 
 ## 安装 / Install
 
 1. 游戏自带 BepInEx 5.4.x，无需另装 / The game ships with BepInEx, nothing else to install
-2. 下载 `bin/SP2GunRing-v0.12.4.zip`，解压到游戏根目录合并覆盖：
+2. 下载 `bin/SP2GunRing-v0.13.9.zip`，解压到游戏根目录合并覆盖：
    `...\steamapps\common\SimplePlanes 2\`
-   Download `bin/SP2GunRing-v0.12.4.zip` and extract it into the game root folder
+   Download `bin/SP2GunRing-v0.13.9.zip` and extract it into the game root folder
 3. 启动游戏，进入飞行场景即可 / Launch the game and enter a flight scene
 
 ## 用法 / Usage
@@ -89,13 +112,16 @@ Ace Combat style target label (v0.9.0):
 | | `MaxRange` | 目标搜索半径 (m) |
 | | `MaxAngle` | 搜索锥角 (度) |
 | Visual | `Mode` | 0=Pinned 环贴准心 / 1=Lead 环画在提前量点（并显示机炮指向准心） |
-| | `Style` | 0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十六条线 |
+| | `Style` | 0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十条线 5=皇牌空战大环 |
+| | `MaxRange` | 预留项；机炮环现在按预测飞行时间 < 机枪 Lifetime 筛选 |
 | | `RingRadiusPx` | 环基础尺寸（像素，散布环更大时以散布为准） |
 | | `MaxOffsetPx` | Pinned 模式环离准心最远像素，0=不限 |
 | | `ShowLine` | 1/0 准心到环的连线 |
 | | `ShowGunCross` | 1/0 Lead 模式下的机炮指向准心 |
 | | `RingFollowsSpread` | 1/0 环大小随机炮散布自动放大（默认 1） |
 | | `RollRotation` | 1/0 机炮环/炮弹环随玩家飞机滚转 1:1（默认 0） |
+| | `FireSpin` | 1/0 按住机枪开火时准心旋转（默认 0） |
+| | `SpinSpeed` | 开火旋转速度(度/秒)，默认 180，角度自动取余 360 |
 | | `SpreadScale` | 散布环缩放百分比 50-400 |
 | Assist | `Assist` | 1/0 辅助瞄准总开关 |
 | | `ToggleAssist` | 预瞄环与机头夹角小于该角度(度)时介入，默认 5 |

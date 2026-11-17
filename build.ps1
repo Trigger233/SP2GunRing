@@ -22,8 +22,9 @@ $refs = $modules | ForEach-Object { "-r:""$Managed\$_""" }
 $refs += "-r:""$Bep\BepInEx.dll"""
 $refs += "-r:""$Bep\0Harmony.dll"""
 
+$srcFiles = Get-ChildItem (Join-Path $PSScriptRoot "src\*.cs") | ForEach-Object { $_.FullName }
 Write-Host "building..."
-& $Csc /noconfig /nostdlib+ /target:library /langversion:5 "/out:$OutDll" @refs (Join-Path $PSScriptRoot "src\Plugin.cs")
+& $Csc /noconfig /nostdlib+ /target:library /langversion:5 "/out:$OutDll" @refs $srcFiles
 if ($LASTEXITCODE -ne 0) { throw "build failed (csc exit $LASTEXITCODE)" }
 if (-not (Test-Path $OutDll)) { throw "build failed" }
 Write-Host ("ok  {0} bytes  ->  {1}" -f (Get-Item $OutDll).Length, $OutDll)

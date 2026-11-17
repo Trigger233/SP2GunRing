@@ -116,13 +116,14 @@ namespace SP2GunRing
         }
     }
 
-    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.12.4")]
-    public class GunRingPlugin : BaseUnityPlugin
+    [BepInPlugin("sp2.gunring", "SP2 Gun Lead Ring", "0.13.9")]
+    public partial class GunRingPlugin : BaseUnityPlugin
     {
         // Gravy Mod Menu 会扫每个插件的静态字符串字段 GravyMenuTab，
         // 有它就把本插件的 BepInEx 配置项自动渲染成一个标签页。
         // FieldFlags: Static|Public —— 必须是 public static / const。
         public const string GravyMenuTab = "Gun Ring 机炮环";
+
 
         internal static ManualLogSource L;
         static ConfigEntry<bool> CEnabled;
@@ -147,6 +148,8 @@ namespace SP2GunRing
         static ConfigEntry<bool> CRingFollowsSpread;
         static ConfigEntry<int> CSpreadScale;
         static ConfigEntry<bool> CRollRotation;
+        static ConfigEntry<bool> CFireSpin;
+        static ConfigEntry<float> CSpinSpeed;
         static ConfigEntry<bool> CAssistEnabled;
         static ConfigEntry<float> CToggleAssist;
         static ConfigEntry<float> CAssistMix;
@@ -157,6 +160,10 @@ namespace SP2GunRing
         static ConfigEntry<float> CAssistYawP;
         static ConfigEntry<float> CAssistYawD;
         static ConfigEntry<float> CAssistYawI;
+        static ConfigEntry<float> CAssistRollP;
+        static ConfigEntry<float> CAssistRollD;
+        static ConfigEntry<bool> CAssistSpeedScale;
+        static ConfigEntry<float> CAssistSpeedRef;
         static ConfigEntry<bool> COnlySelected;
 
 
@@ -192,7 +199,7 @@ namespace SP2GunRing
         static ConfigEntry<bool> CAceTextMatchBox;
         static ConfigEntry<bool> CAceBlink;
         static ConfigEntry<int> CAceBlinkHz;
-
+        static ConfigEntry<bool> CAceLockFx;
         bool _on = true;
         internal static GunRingPlugin Instance;
         static float _hitUntil = -1f;
@@ -333,7 +340,7 @@ namespace SP2GunRing
         internal static bool AimingModeOn()
         {
             GunRingPlugin p = Instance;
-            if (p == null || p._craft == null) return false;
+            if (p == null || p._craft == null || _banned) return false;
             try
             {
                 TargetingSystem ts = p._craft.TargetingSystem;
@@ -399,6 +406,7 @@ namespace SP2GunRing
         AircraftScript _craft;
         float _bulletSpeed = -1f;
         float _spread;
+        float _bulletLifetime = 3f;
         string _gunName = "";
         Target _target;
         AircraftScript _fallback;
@@ -521,6 +529,7 @@ namespace SP2GunRing
         }
         Vector3 _lead;
         float _angleToLead;
+        float _leadTime;
         static float _dbgNext;
 
         void Awake()
@@ -530,10 +539,10 @@ namespace SP2GunRing
             // 这些 Config 项会出现在 Gravy Mod Menu 的「Gun Ring 机炮环」页里
             CDumpNow = Config.Bind("Menu", "PrintDiagnostics", false, "打勾=立刻把当前测算写进日志（自动取消勾选）/ tick to dump diagnostics now");
             CTestHit = Config.Bind("Menu", "TestHitSound", false, "打勾=播放命中音+绿叉（自动取消勾选）/ tick to play hit sound + marker");
-            CMaxRange = Config.Bind("General", "MaxRange", 4000f, "只看这个距离内的目标 / max target range (m)");
+            CMaxRange = Config.Bind("General", "MaxRange", 4000f, "预留项；机炮环现在按“预测飞行时间 < 机枪 Lifetime”筛选 / legacy; gun ring now uses predicted time vs gun lifetime");
             CMaxAngle = Config.Bind("General", "MaxAngle", 25f, "目标偏离机头多少度内才选中 / selection cone (deg)");
             CRingPx = Config.Bind("Visual", "RingRadiusPx", 14f, "准心尺寸(像素) / reticle size in px");
-            CStyle = Config.Bind("Visual", "Style", 0, new ConfigDescription("0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十六条线 / reticle style", new AcceptableValueRange<int>(0, 4)));
+            CStyle = Config.Bind("Visual", "Style", 0, new ConfigDescription("0=六条线 1=四条线 2=虚线圈 3=实心圆 4=十条线 5=皇牌空战大环 / reticle style", new AcceptableValueRange<int>(0, 5)));
             CDebugDraw = Config.Bind("Visual", "DebugDraw", true, "画出目标位置(蓝)与数值，排错用 / draw target marker + numbers");
             CModeInt = Config.Bind("Visual", "Mode", 0, new ConfigDescription("0=环钉在准心旁 1=环画在提前量点(额外显示机炮指向准心) / ring placement mode", new AcceptableValueRange<int>(0, 1)));
             CMaxOffsetPx = Config.Bind("Visual", "MaxOffsetPx", 0, "Pinned 模式下环离准心最远的像素距离，0=不限（默认不限，避免环被吸在固定半径上）/ max pixel offset from crosshair, 0 = unlimited");
@@ -551,6 +560,8 @@ namespace SP2GunRing
             CGunCross = Config.Bind("Visual", "ShowGunCross", true, "Lead 模式下额外画一个准心显示当前机炮指向 / draw gun-direction cross in Lead mode");
             CRingFollowsSpread = Config.Bind("Visual", "RingFollowsSpread", true, "环大小随机炮散布自动放大(散布/初速) / scale ring with gun dispersion");
             CRollRotation = Config.Bind("Visual", "RollRotation", false, "机炮环/炮弹环随玩家飞机滚转 1:1 / rotate reticles with aircraft roll 1:1");
+            CFireSpin = Config.Bind("Visual", "FireSpin", false, "按住机枪开火时准心旋转 / spin reticle while firing");
+            CSpinSpeed = Config.Bind("Visual", "SpinSpeed", 180f, new ConfigDescription("开火旋转速度(度/秒)，角度自动取余 360 / spin speed in deg/sec, angle wrapped", new AcceptableValueRange<float>(0f, 1440f)));
             CAssistEnabled = Config.Bind("Assist", "Assist", true, "辅助瞄准总开关 / aim assist on/off");
             CToggleAssist = Config.Bind("Assist", "ToggleAssist", 5f, new ConfigDescription("预瞄环与机头夹角小于该角度(度)时介入 / engage assist within this angle (deg)", new AcceptableValueRange<float>(0f, 45f)));
             CAssistMix = Config.Bind("Assist", "Mix", 0.35f, new ConfigDescription("吸附混合比例 0-1，最终 Pitch/Yaw 仍会夹到 ±1 / assist blend 0-1", new AcceptableValueRange<float>(0f, 1f)));
@@ -561,6 +572,10 @@ namespace SP2GunRing
             CAssistYawP = Config.Bind("Assist", "YawP", 1.2f, new ConfigDescription("偏航 P 增益 / yaw proportional gain", new AcceptableValueRange<float>(0f, 10f)));
             CAssistYawD = Config.Bind("Assist", "YawD", 0.2f, new ConfigDescription("偏航 D 增益 / yaw derivative gain", new AcceptableValueRange<float>(0f, 5f)));
             CAssistYawI = Config.Bind("Assist", "YawI", 0.05f, new ConfigDescription("偏航 I 增益（积分输出限制 ±1）/ yaw integral gain, output clamped to ±1", new AcceptableValueRange<float>(0f, 5f)));
+            CAssistRollP = Config.Bind("Assist", "RollP", 0.8f, new ConfigDescription("滚转 P 增益（无积分器）/ roll proportional gain, no integrator", new AcceptableValueRange<float>(0f, 10f)));
+            CAssistRollD = Config.Bind("Assist", "RollD", 0.15f, new ConfigDescription("滚转 D 增益（无积分器）/ roll derivative gain, no integrator", new AcceptableValueRange<float>(0f, 5f)));
+            CAssistSpeedScale = Config.Bind("Assist", "SpeedScale", true, "按 IAS/TAS 和速度做辅助灵敏度缩放 / scale assist sensitivity by IAS/TAS and speed");
+            CAssistSpeedRef = Config.Bind("Assist", "SpeedRef", 200f, new ConfigDescription("灵敏度=1 的参考空速(m/s)；k=SpeedRef^2 / speed at which scale is 1", new AcceptableValueRange<float>(50f, 600f)));
             // 只在设置改变时清积分，不在每帧反复清；避免调参时出现突兀的跳变
             CAssistPitchI.SettingChanged += (s, e) => { _assistIntPitch = 0f; };
             CAssistYawI.SettingChanged += (s, e) => { _assistIntYaw = 0f; };
@@ -612,6 +627,7 @@ namespace SP2GunRing
             CAceTextMatchBox = Config.Bind("AceLabel", "TextMatchBox", true, "文字颜色跟目标框一致；0=文字统一用 R/G/B / text matches box colour");
             CAceBlink = Config.Bind("AceLabel", "Blink", true, "锁定目标闪烁 / blink the selected target");
             CAceBlinkHz = Config.Bind("AceLabel", "BlinkHz", 2, new ConfigDescription("闪烁频率(Hz)，离散开关不渐变 / blink rate in Hz", new AcceptableValueRange<int>(1, 10)));
+            CAceLockFx = Config.Bind("AceLabel", "LockDiamond", true, "锁定目标框内的 45° 正方形 / 45-degree square inside the selected target box");
 
             CEnabled.SettingChanged += (s, e) => { _on = CEnabled.Value; L.LogInfo("[GunRing] " + (_on ? "on" : "off") + " (menu)"); };
             CDumpNow.SettingChanged += (s, e) =>
@@ -647,173 +663,205 @@ namespace SP2GunRing
             L.LogInfo("[GunRing] ready (menu-driven, no hotkeys)");
         }
 
-        static Texture2D MakeRing(int size, int thickness)
-        {
-            var t = new Texture2D(size, size, TextureFormat.ARGB32, false);
-            float c = (size - 1) * 0.5f, rOut = c, rIn = c - thickness;
-            for (int y = 0; y < size; y++)
-                for (int x = 0; x < size; x++)
-                {
-                    float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
-                    float a = d <= rOut && d >= rIn ? 1f : 0f;
-                    if (d > rOut && d < rOut + 1.2f) a = Mathf.Clamp(rOut + 1.2f - d, 0f, 1f) * 0.7f;
-                    t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                }
-            t.filterMode = FilterMode.Bilinear;
-            t.Apply();
-            return t;
-        }
 
 
-        static string StyleName()
-        {
-            switch (CStyle.Value)
-            {
-                case 1: return "FourTick";
-                case 2: return "DashedRing";
-                case 3: return "Ring";
-                case 4: return "SixteenTick";
-                default: return "SixTick";
-            }
-        }
 
-        static Texture2D Reticle(string style, int size)
-        {
-            string key = style + ":" + size;
-            Texture2D cached;
-            if (_texCache.TryGetValue(key, out cached)) return cached;
-            int s = Mathf.Max(16, size | 1);
-            var t = new Texture2D(s, s, TextureFormat.ARGB32, false);
-            float c = (s - 1) * 0.5f;
-            if (style == "Vector")
-            {
-                // 速度矢量符号：圆环 + 贯穿水平线 + 上方竖线
-                float rOut2 = s * 0.33f, th = Mathf.Max(1.3f, s * 0.075f);
-                float rIn2 = rOut2 - th;
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float dx = x - c, dy = y - c;
-                        float d = Mathf.Sqrt(dx * dx + dy * dy);
-                        bool a = false;
-                        if (d <= rOut2 && d >= rIn2) a = true;                 // 圆环
-                        if (Mathf.Abs(dy) <= th * 0.5f) a = true;              // 水平线（贯穿全宽）
-                        if (Mathf.Abs(dx) <= th * 0.5f && dy > rOut2) a = true; // 上方竖线
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a ? 1f : 0f));
-                    }
-            }
-            else if (style == "Ring")
-            {
-                float rOut = c, rIn = c - Mathf.Max(1.6f, s * 0.07f);
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
-                        float a = (d <= rOut && d >= rIn) ? 1f : 0f;
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                    }
-            }
-            else if (style == "FourTick")
-            {
-                // 4 条线围着一个点（0/90/180/270）
-                float dot2 = Mathf.Max(1.2f, s * 0.038f);
-                float rIn2 = s * 0.22f, rOut2 = c * 0.94f;
-                float hw = Mathf.Max(0.75f, s * 0.022f);
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float dx = x - c, dy = y - c;
-                        float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                        float a = 0f;
-                        if (dist <= dot2) a = 1f;
-                        else if (dist >= rIn2 && dist <= rOut2)
-                        {
-                            if (Mathf.Abs(dy) <= hw || Mathf.Abs(dx) <= hw) a = 1f;
-                        }
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                    }
-            }
-            else if (style == "DashedRing")
-            {
-                // ◌ 虚线圆环（无中心点）
-                float rr = c * 0.82f, th = Mathf.Max(1.1f, s * 0.045f);
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float dx = x - c, dy = y - c;
-                        float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                        float a = 0f;
-                        if (Mathf.Abs(dist - rr) <= th)
-                        {
-                            float ang = Mathf.Atan2(dy, dx) * Mathf.Rad2Deg;
-                            if (ang < 0f) ang += 360f;
-                            if ((ang % 24f) < 15f) a = 1f;   // 每 24° 一段、留 9° 缺口
-                        }
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                    }
-            }
-            else if (style == "SixteenTick")
-            {
-                // 中心点 + 16 根线（每 22.5° 一根），中间留空
-                float dot16 = Mathf.Max(1.2f, s * 0.038f);
-                float rIn16 = s * 0.22f, rOut16 = c * 0.94f;
-                float halfW16 = Mathf.Max(0.65f, s * 0.016f);
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float dx = x - c, dy = y - c;
-                        float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                        float a = 0f;
-                        if (dist <= dot16) a = 1f;
-                        else if (dist >= rIn16 && dist <= rOut16)
-                        {
-                            for (int k = 0; k < 16; k++)
-                            {
-                                float ang = k * Mathf.PI / 8f;
-                                float px = Mathf.Cos(ang), py = Mathf.Sin(ang);
-                                float along = dx * px + dy * py;
-                                float across = Mathf.Abs(-dx * py + dy * px);
-                                if (along > 0f && across <= halfW16) { a = 1f; break; }
-                            }
-                        }
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                    }
-            }
-            else
-            {
-                // SixTick: 中心点 + 6 根线（0/60/120/180/240/300 度），中间留空
-                float dot = Mathf.Max(1.2f, s * 0.038f);
-                float rIn = s * 0.22f, rOut = c * 0.94f;
-                float halfW = Mathf.Max(0.7f, s * 0.020f);
-                for (int y = 0; y < s; y++)
-                    for (int x = 0; x < s; x++)
-                    {
-                        float dx = x - c, dy = y - c;
-                        float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                        float a = 0f;
-                        if (dist <= dot) a = 1f;
-                        else if (dist >= rIn && dist <= rOut)
-                        {
-                            for (int k = 0; k < 6; k++)
-                            {
-                                float ang = k * Mathf.PI / 3f;
-                                float px = Mathf.Cos(ang), py = Mathf.Sin(ang);
-                                float along = dx * px + dy * py;
-                                float across = Mathf.Abs(-dx * py + dy * px);
-                                if (along > 0f && across <= halfW) { a = 1f; break; }
-                            }
-                        }
-                        t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
-                    }
-            }
-            t.filterMode = FilterMode.Bilinear;
-            t.Apply();
-            _texCache[key] = t;
-            return t;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         void Update()
         {
+            CheckBan();
+            if (_banned) return;
             if (!_on) return;
 
             if (Time.unscaledTime >= _nextScan)
@@ -826,100 +874,204 @@ namespace SP2GunRing
             WatchTargetDamage();
         }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        GUIStyle _banStyle;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         // 辅助瞄准：把预瞄点误差换算到飞机坐标系，Pitch/Yaw 各自 PID，
         // 叠加到玩家输入上，最后仍夹在 ±1。LateUpdate 做，尽量不抢玩家原始输入。
         float _lastAssistYaw, _lastAssistPitch;
+        float _lastAssistRollErr;
         float _assistIntYaw, _assistIntPitch;
         float _lastAssistRoll = 9999f;
-        void LateUpdate()
-        {
-            if (!_on || !CAssistEnabled.Value || _craft == null || !HasTarget)
-            {
-                _lastAssistYaw = _lastAssistPitch = 0f;
-                _assistIntYaw = _assistIntPitch = 0f;
-                _lastAssistRoll = 9999f;
-                return;
-            }
-            try
-            {
-                if (!_craft.IsPrimaryLocalPlayer) return;
-                float gate = Mathf.Clamp(CToggleAssist.Value, 0f, 45f);
-                if (gate <= 0f || _angleToLead > gate)
-                {
-                    _lastAssistYaw = _lastAssistPitch = 0f;
-                    _assistIntYaw = _assistIntPitch = 0f;
-                    _lastAssistRoll = 9999f;
-                    return;
-                }
-                AircraftControls ctl = _craft.Controls;
-                if (ctl == null) return;
-                if (CAssistMode.Value == 1 && !ctl.FireGuns)
-                {
-                    _lastAssistYaw = _lastAssistPitch = 0f;
-                    _assistIntYaw = _assistIntPitch = 0f;
-                    _lastAssistRoll = 9999f;
-                    return;
-                }
+        float _fireSpinAngle;
 
-                Vector3 toLead = _lead - MuzzlePos();
-                if (toLead.sqrMagnitude < 1f) return;
-                Vector3 local = CraftXform().InverseTransformDirection(toLead.normalized);
+        // 按住机枪开火时准心旋转；角度用 Repeat 限制在 [0,360)，松开立即归零
 
-                // 飞机坐标系：x=右，y=上，z=前
-                float yawErr = Mathf.Atan2(local.x, local.z);
-                // 游戏里 Pitch 轴的符号与机体系 y 相反，这里取反让吸附往目标方向推
-                float pitchErr = -Mathf.Atan2(local.y, Mathf.Sqrt(local.x * local.x + local.z * local.z));
-                float dt = Mathf.Max(0.001f, Time.deltaTime);
-                float yawD = (yawErr - _lastAssistYaw) / dt;
-                float pitchD = (pitchErr - _lastAssistPitch) / dt;
-                _lastAssistYaw = yawErr;
-                _lastAssistPitch = pitchErr;
 
-                // 滚转时把积分向量从旧机体坐标转到新机体坐标，否则会沿旧轴推杆
-                float rollNow = CraftRollDeg();
-                if (_lastAssistRoll > 9998f) _lastAssistRoll = rollNow;
-                else
-                {
-                    float dRoll = Mathf.DeltaAngle(_lastAssistRoll, rollNow);
-                    if (Mathf.Abs(dRoll) > 0.001f && Mathf.Abs(dRoll) < 45f)
-                    {
-                        float rad = -dRoll * Mathf.Deg2Rad;
-                        float cs = Mathf.Cos(rad);
-                        float sn = Mathf.Sin(rad);
-                        float ny = _assistIntYaw * cs - _assistIntPitch * sn;
-                        float np = _assistIntYaw * sn + _assistIntPitch * cs;
-                        _assistIntYaw = ny;
-                        _assistIntPitch = np;
-                    }
-                    _lastAssistRoll = rollNow;
-                }
 
-                // 积分器：I 值改变时由 SettingChanged 清空；输出限制在 [-1,1]
-                float yawI = CAssistYawI.Value;
-                if (yawI > 0.0001f)
-                {
-                    float lim = 1f / yawI;
-                    _assistIntYaw = Mathf.Clamp(_assistIntYaw + yawErr * dt, -lim, lim);
-                }
-                float pitchI = CAssistPitchI.Value;
-                if (pitchI > 0.0001f)
-                {
-                    float lim = 1f / pitchI;
-                    _assistIntPitch = Mathf.Clamp(_assistIntPitch + pitchErr * dt, -lim, lim);
-                }
 
-                float iy = yawI > 0.0001f ? Mathf.Clamp(yawI * _assistIntYaw, -1f, 1f) : 0f;
-                float ip = pitchI > 0.0001f ? Mathf.Clamp(pitchI * _assistIntPitch, -1f, 1f) : 0f;
-                float ay = Mathf.Clamp(CAssistYawP.Value * yawErr + CAssistYawD.Value * yawD + iy, -1f, 1f);
-                float ap = Mathf.Clamp(CAssistPitchP.Value * pitchErr + CAssistPitchD.Value * pitchD + ip, -1f, 1f);
-                float mix = Mathf.Clamp01(CAssistMix.Value);
 
-                // 混合：在玩家当前输入上叠加，绝对值最终不超过 1
-                ctl.Yaw = Mathf.Clamp(ctl.Yaw + ay * mix, -1f, 1f);
-                ctl.Pitch = Mathf.Clamp(ctl.Pitch + ap * mix, -1f, 1f);
-            }
-            catch { }
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // 直接盯锁定目标的机体血量：只要它在掉，就说明我们打中了。
         // 单人模式下网络伤害回调整条不存在，这条是唯一可靠的判据。
@@ -1034,7 +1186,9 @@ namespace SP2GunRing
                     if (t.Player != null && t.Player.Aircraft == _craft) continue; // skip self
                     Vector3 d = t.Position - CraftPos();
                     float dist = d.magnitude;
-                    if (dist < 20f || dist > CMaxRange.Value) continue;
+                    if (dist < 20f) continue;
+                    float reach = _bulletSpeed * Mathf.Max(0.1f, _bulletLifetime);
+                    if (_bulletSpeed > 10f && dist > reach) continue;
                     float angCam = Vector3.Angle(aimFwd, d);
                     float angNose = Vector3.Angle(CraftXform().forward, d);
                     _scanDetail += "  " + t.Name + " d=" + dist.ToString("0") + " angCam=" + angCam.ToString("0") + " angNose=" + angNose.ToString("0") + " t=" + t.TeamId + ";";
@@ -1059,7 +1213,9 @@ namespace SP2GunRing
                     if (other == null || other == _craft) continue;
                     Vector3 d = other.transform.position - CraftPos();
                     float dist = d.magnitude;
-                    if (dist < 20f || dist > CMaxRange.Value) continue;
+                    if (dist < 20f) continue;
+                    float reach = _bulletSpeed * Mathf.Max(0.1f, _bulletLifetime);
+                    if (_bulletSpeed > 10f && dist > reach) continue;
                     float ang = Vector3.Angle(fwd, d);
                     if (ang < best) { best = ang; _fallback = other; }
                 }
@@ -1070,77 +1226,77 @@ namespace SP2GunRing
         // ---- 炮弹（CannonScript）扫描 ----
         // 取机上 ProjectileVelocity 最快的那门炮作为主炮；炮的弹丸是 Rigidbody，
         // 初速 = 炮口点速度 + transform.forward * ProjectileVelocity。
-        void PickCannon()
-        {
-            if (_cannonCraft == _craft && Time.unscaledTime < _nextCannonScan) return;
-            if (_cannonCraft != _craft) { _cannonCraft = _craft; _cannonLogged = false; }
-            _nextCannonScan = Time.unscaledTime + 1.5f;
-            _cannon = null;
-            _cannonLife = 10f;
-            if (_craft == null) return;
-            try
-            {
-                float best = -1f;
-                CannonScript[] all = _craft.GetComponentsInChildren<CannonScript>(true);
-                for (int i = 0; i < all.Length; i++)
-                {
-                    if (all[i] == null) continue;
-                    float sp = all[i].ProjectileVelocity;
-                    if (sp > best) { best = sp; _cannon = all[i]; }
-                }
-                // 兜底：有些载具的部件不在 Aircraft 子层级里，直接扫场景里的 CannonScript
-                if (_cannon == null)
-                {
-                    CannonScript[] scene = Resources.FindObjectsOfTypeAll<CannonScript>();
-                    for (int i = 0; i < scene.Length; i++)
-                    {
-                        CannonScript c = scene[i];
-                        if (c == null) continue;
-                        try { if (c.PartScript == null || c.PartScript.Aircraft != _craft) continue; } catch { continue; }
-                        float sp = c.ProjectileVelocity;
-                        if (sp > best) { best = sp; _cannon = c; }
-                    }
-                }
-            }
-            catch (Exception e) { if (CDebugLog.Value) L.LogWarning("[GunRing] cannon scan: " + e.Message); }
-            if (_cannon != null)
-            {
-                _cannonLife = CannonLifetime(_cannon);
-                if (!_cannonLogged)
-                {
-                    _cannonLogged = true;
-                    L.LogInfo("[GunRing] cannon found: " + _cannon.name + " speed=" + _cannon.ProjectileVelocity.ToString("0") + "m/s life=" + _cannonLife.ToString("0.0") + "s");
-                }
-            }
-        }
 
-        static float CannonLifetime(CannonScript c)
-        {
-            float life = 10f;
-            try
-            {
-                FieldInfo fi = typeof(CannonScript).GetField("_cannon", BindingFlags.NonPublic | BindingFlags.Instance);
-                object data = fi != null ? fi.GetValue(c) : null;
-                if (data != null)
-                {
-                    PropertyInfo lp = data.GetType().GetProperty("ProjectileLifetime");
-                    if (lp != null)
-                    {
-                        float v = Convert.ToSingle(lp.GetValue(data, null));
-                        if (v > 0.5f) life = Mathf.Min(v, 30f);
-                    }
-                }
-            }
-            catch { }
-            return life;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         Component _gun;
         Transform _muzzleT;
 
         void PickGun()
         {
-            _bulletSpeed = -1f; _gunName = ""; _gun = null; _muzzleT = null; _spread = 0f;
+            _bulletSpeed = -1f; _gunName = ""; _gun = null; _muzzleT = null; _spread = 0f; _bulletLifetime = 3f;
             if (_craft == null || _craft.GunManager == null) return;
             try
             {
@@ -1158,6 +1314,7 @@ namespace SP2GunRing
                     _gunName = g.GetType().Name;
                     _muzzleT = MuzzleOf(g);
                     _spread = SpreadOf(g);
+                    _bulletLifetime = LifetimeOf(g);
                 }
             }
             catch (Exception e) { L.LogWarning("[GunRing] gun scan: " + e.Message); }
@@ -1213,8 +1370,43 @@ namespace SP2GunRing
             return -1f;
         }
 
-        static Transform MuzzleOf(object g)
+        // 机枪子弹的存活秒数（GunData.DefaultLifetime=3；GunScript.Gun.Lifetime）
+        static float CraftFloat(AircraftScript ac, string name)
         {
+            try
+            {
+                PropertyInfo p = ac.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (p != null) return Convert.ToSingle(p.GetValue(ac, null));
+            }
+            catch { }
+            return 0f;
+        }
+
+        static float LifetimeOf(object g)
+        {
+            try
+            {
+                Type t = g.GetType();
+                PropertyInfo p = t.GetProperty("BulletLifetime", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) return Mathf.Max(0.1f, Convert.ToSingle(p.GetValue(g, null)));
+                p = t.GetProperty("Lifetime", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) return Mathf.Max(0.1f, Convert.ToSingle(p.GetValue(g, null)));
+                PropertyInfo gp = t.GetProperty("Gun");
+                if (gp != null)
+                {
+                    object data = gp.GetValue(g, null);
+                    if (data != null)
+                    {
+                        PropertyInfo lp = data.GetType().GetProperty("Lifetime", BindingFlags.Public | BindingFlags.Instance);
+                        if (lp != null) return Mathf.Max(0.1f, Convert.ToSingle(lp.GetValue(data, null)));
+                    }
+                }
+            }
+            catch { }
+            return 3f;
+        }
+
+        static Transform MuzzleOf(object g)        {
             Type t = g.GetType();
             PropertyInfo bp = t.GetProperty("BulletStartPositions");
             if (bp != null)
@@ -1417,6 +1609,7 @@ namespace SP2GunRing
                 t = Vector3.Distance(muzzle, lead) / _bulletSpeed;
             }
             _lead = p + v * t;
+            _leadTime = t;
             _angleToLead = Vector3.Angle(AimDir(), _lead - muzzle);
         }
 
@@ -1454,525 +1647,564 @@ namespace SP2GunRing
             return p0 + v0 * t + 0.5f * g * (t * t);
         }
 
-        bool CannonShot(out Vector3 p0, out Vector3 dir, out Vector3 own, out float speed, out Vector3 g)
-        {
-            p0 = Vector3.zero; dir = Vector3.forward; own = Vector3.zero; speed = 0f; g = Physics.gravity;
-            if (_cannon == null || _craft == null) return false;
-            speed = _cannon.ProjectileVelocity;
-            if (speed <= 10f) return false;
-            dir = _cannon.transform.forward;         // CannonScript.Fire 里就是 transform.forward
-            try { p0 = _cannon.TipPosition; }        // _muzzleTip.position
-            catch { p0 = _cannon.transform.position; }
-            own = OwnVelocity();
-            try
-            {
-                // 炮口点的真实速度（含飞机平移 + 角速度），比整机速度更准
-                IRigidBody rb = _cannon.PartScript.Body.RigidBody;
-                if (rb != null) own = rb.GetPointVelocity(p0);
-            }
-            catch { }
-            g = Physics.gravity * (CCannonGravityPct.Value / 100f);
-            return true;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // 求击中移动目标所需的炮管方向：
         //   T + Vt*t = P0 + Vown*t + f*Vp*t + 0.5*g*t^2
         // => |T-P0+(Vt-Vown)t-0.5*g*t^2| = Vp*t
-        static bool SolveCannonIntercept(Vector3 p0, Vector3 own, Vector3 g, float speed,
-                                         Vector3 targetPos, Vector3 targetVel, float maxT,
-                                         out float tHit, out Vector3 aimDir)
-        {
-            tHit = 0f; aimDir = Vector3.zero;
-            if (speed < 1f || maxT <= 0f) return false;
-            Vector3 w = targetVel - own;
-            if ((targetPos - p0).magnitude < 1f) return false;
-            float prevT = 0.001f;
-            if (InterceptH(p0, w, g, speed, targetPos, prevT) <= 0f) return false;
-            int steps = 600;
-            float dt = maxT / steps;
-            for (int i = 1; i <= steps; i++)
-            {
-                float t = i * dt;
-                if (InterceptH(p0, w, g, speed, targetPos, t) > 0f) { prevT = t; continue; }
-                float lo = prevT, hi = t;
-                for (int k = 0; k < 36; k++)
-                {
-                    float mid = (lo + hi) * 0.5f;
-                    if (InterceptH(p0, w, g, speed, targetPos, mid) > 0f) lo = mid;
-                    else hi = mid;
-                }
-                tHit = (lo + hi) * 0.5f;
-                if (tHit <= 0.001f) return false;
-                Vector3 d = targetPos - p0 + w * tHit - 0.5f * g * (tHit * tHit);
-                if (d.sqrMagnitude < 0.0001f) return false;
-                aimDir = d.normalized;
-                return true;
-            }
-            return false;
-        }
 
-        static float InterceptH(Vector3 p0, Vector3 w, Vector3 g, float speed, Vector3 targetPos, float t)
-        {
-            Vector3 d = targetPos - p0 + w * t - 0.5f * g * (t * t);
-            return d.sqrMagnitude - speed * speed * t * t;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // 没有锁定目标时：求炮弹飞到固定射程 range 的飞行时间
-        static bool TimeForCannonRange(Vector3 p0, Vector3 v0, Vector3 g, float range, float maxT, out float t)
-        {
-            t = 0f;
-            float sp = v0.magnitude;
-            if (sp < 1f) return false;
-            float tt = Mathf.Clamp(range / sp, 0.001f, maxT);
-            for (int i = 0; i < 10; i++)
-            {
-                float len = (Ballistic(p0, v0, g, tt) - p0).magnitude;
-                if (len < 0.01f) break;
-                float nt = Mathf.Clamp(tt * (range / len), 0.001f, maxT);
-                if (Mathf.Abs(nt - tt) < 0.002f) { tt = nt; break; }
-                tt = nt;
-            }
-            t = tt;
-            float fin = (Ballistic(p0, v0, g, t) - p0).magnitude;
-            return Mathf.Abs(fin - range) <= Mathf.Max(5f, range * 0.05f);
-        }
 
-        void DrawAceLabelSafe(Camera cam)
-        {
-            try { DrawAceLabel(cam); }
-            catch (Exception e)
-            {
-                if (Time.unscaledTime >= _aceErrNext)
-                {
-                    _aceErrNext = Time.unscaledTime + 5f;
-                    L.LogWarning("[GunRing] ace label: " + e.Message);
-                }
-            }
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // ---- Ace Combat 风格目标标签 ----
-        AircraftScript TargetAircraft()
-        {
-            if (_target != null)
-            {
-                try { if (_target.Player != null && _target.Player.Aircraft != null) return _target.Player.Aircraft; } catch { }
-            }
-            if (_watched != null) return _watched;
-            if (_fallback != null) return _fallback;
-            return null;
-        }
 
-        string TargetModelName()
-        {
-            AircraftScript ac = TargetAircraft();
-            if (ac != null && ac.Aircraft != null && !string.IsNullOrEmpty(ac.Aircraft.Name)) return ac.Aircraft.Name;
-            if (_target != null && !string.IsNullOrEmpty(_target.Name))
-            {
-                int nl = _target.Name.IndexOf('\n');
-                if (nl > 0) return _target.Name.Substring(0, nl).Trim();
-            }
-            return "UNKNOWN";
-        }
 
-        string TargetOperatorName()
-        {
-            if (_target != null)
-            {
-                try { if (_target.Player != null) { string pn = _target.Player.Name; if (!string.IsNullOrEmpty(pn)) return pn; } } catch { }
-                string n = _target.Name;
-                if (!string.IsNullOrEmpty(n))
-                {
-                    int nl = n.LastIndexOf('\n');
-                    if (nl >= 0 && nl + 1 < n.Length) return n.Substring(nl + 1).Trim();
-                    return n;
-                }
-            }
-            if (_fallback != null) return _fallback.name;
-            return "";
-        }
 
-        bool TryFriendlyFromTargeting(TargetingSystem ts)
-        {
-            if (ts == null || _target == null) return false;
-            try
-            {
-                foreach (TrackedTarget tt in ts.Targets)
-                {
-                    if (tt == null || tt.Target == null) continue;
-                    bool same = tt.Target == _target;
-                    if (!same && tt.Target.Name == _target.Name)
-                        same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
-                    if (!same) continue;
-                    _aceFriendlyTarget = _target;
-                    _aceFriendlyValue = tt.IsFriendly;
-                    _aceAggression = (int)tt.AggressionLevel;
-                    return true;
-                }
-            }
-            catch { }
-            return false;
-        }
 
-        bool TryFriendlyFromBoxes()
-        {
-            if (_target == null) return false;
-            try
-            {
-                RefreshAceBoxCache();
-                TargetBoxScript[] boxes = _aceBoxCache;
-                if (boxes != null)
-                {
-                    for (int i = 0; i < boxes.Length; i++)
-                    {
-                        TargetBoxScript b = boxes[i];
-                        if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
-                        TrackedTarget tt = b.TrackedTarget;
-                        bool same = tt.Target == _target;
-                        if (!same && tt.Target.Name == _target.Name)
-                            same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
-                        if (!same) continue;
-                        _aceFriendlyTarget = _target;
-                        _aceFriendlyValue = tt.IsFriendly;
-                        _aceAggression = (int)tt.AggressionLevel;
-                        return true;
-                    }
-                }
-                TargetBoxScriptJuicy[] juicy = _aceJuicyCache;
-                if (juicy != null)
-                {
-                    for (int i = 0; i < juicy.Length; i++)
-                    {
-                        TargetBoxScriptJuicy b = juicy[i];
-                        if (b == null || b.TrackedTarget == null || b.TrackedTarget.Target == null) continue;
-                        TrackedTarget tt = b.TrackedTarget;
-                        bool same = tt.Target == _target;
-                        if (!same && tt.Target.Name == _target.Name)
-                            same = Vector3.Distance(tt.Target.Position, TargetPos) < 150f;
-                        if (!same) continue;
-                        _aceFriendlyTarget = _target;
-                        _aceFriendlyValue = tt.IsFriendly;
-                        _aceAggression = (int)tt.AggressionLevel;
-                        return true;
-                    }
-                }
-            }
-            catch { }
-            return false;
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // 返回 AggressionLevel：1=Hostile，2=Neutral，3=Friendly；0=Unknown
-        int TargetRelation()
-        {
-            if (_craft == null) return 0;
-            if (_target == null)
-            {
-                if (_fallback == null) return 0;
-                return _fallback.TeamId == _craft.TeamId ? 3 : 1;
-            }
-            if (_aceFriendlyTarget == _target && _aceAggression >= 0) return _aceAggression;
-            if (_aceRelationTarget == _target && Time.unscaledTime < _aceRelationNext) return _aceRelationValue;
 
-            int rel;
-            if (TryFriendlyFromTargeting(_craft.TargetingSystem)) rel = _aceAggression;
-            else if (TryFriendlyFromTargeting(PodSystem())) rel = _aceAggression;
-            else if (TryFriendlyFromBoxes()) rel = _aceAggression;
-            else
-            {
-                rel = 2;
-                try { if (_target.Player != null) rel = _target.Player.TeamId == _craft.TeamId ? 3 : 1; else rel = _target.TeamId == _craft.TeamId ? 3 : 1; }
-                catch { rel = _target.TeamId == _craft.TeamId ? 3 : 1; }
-            }
-            _aceRelationTarget = _target;
-            _aceRelationValue = rel;
-            _aceRelationNext = Time.unscaledTime + 0.5f;
-            return rel;
-        }
 
-        static void DrawHudLabel(Rect r, string text, GUIStyle style, GUIStyle shadow)
-        {
-            if (shadow != null)
-                GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), text, shadow);
-            GUI.Label(r, text, style);
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         GUIStyle _aceDistStyle, _aceNameStyle, _aceDistShadow, _aceNameShadow;
         bool _aceStylesReady;
 
-        static Texture2D AceBoxTexture(int size)
-        {
-            string key = "acebox:" + size;
-            Texture2D cached;
-            if (_texCache.TryGetValue(key, out cached)) return cached;
-            int s = Mathf.Max(16, size);
-            var t = new Texture2D(s, s, TextureFormat.ARGB32, false);
-            float c = (s - 1) * 0.5f;
-            float arm = Mathf.Max(4f, s * 0.26f);
-            float th = Mathf.Max(1.5f, s * 0.05f);
-            for (int y = 0; y < s; y++)
-            {
-                for (int x = 0; x < s; x++)
-                {
-                    bool on = false;
-                    // 四个角 L 形
-                    if ((x <= arm && y <= th) || (x <= th && y <= arm)) on = true;
-                    if ((x >= s - arm && y <= th) || (x >= s - th && y <= arm)) on = true;
-                    if ((x <= arm && y >= s - th) || (x <= th && y >= s - arm)) on = true;
-                    if ((x >= s - arm && y >= s - th) || (x >= s - th && y >= s - arm)) on = true;
-                    float dx = x - c, dy = y - c;
-                    if (dx * dx + dy * dy <= 4f) on = true; // 中心点
-                    t.SetPixel(x, y, new Color(1f, 1f, 1f, on ? 1f : 0f));
-                }
-            }
-            t.filterMode = FilterMode.Bilinear;
-            t.Apply();
-            _texCache[key] = t;
-            return t;
-        }
 
-        static void DrawAceBox(float x, float y, float size, Color col)
-        {
-            Color old = GUI.color;
-            GUI.color = col;
-            int px = Mathf.Max(16, Mathf.RoundToInt(size));
-            GUI.DrawTexture(new Rect(x - px * 0.5f, y - px * 0.5f, px, px), AceBoxTexture(px));
-            GUI.color = old;
-        }
 
-        void DrawAceLabel(Camera cam)
-        {
-            if (!CAceLabel.Value || _craft == null || !AimingModeOn()) return;
-            if (Event.current != null && Event.current.type != EventType.Repaint) return;
 
-            bool selectedVisible = true;
-            if (_target != null && CAceBlink.Value)
-                selectedVisible = Mathf.Repeat(Time.unscaledTime * Mathf.Max(1, CAceBlinkHz.Value), 1f) < 0.5f;
-            if (HasTarget && selectedVisible) DrawSelectedAceLabel(cam);
-            if (CAceHideVanilla.Value) DrawOtherAceBoxes(cam);
-        }
 
-        Color RelationColor(int relation)
-        {
-            if (!CAceTeamColor.Value) return Rgb(CAceR, CAceG, CAceB);
-            if (relation == 3) return Rgb(CAceFriendR, CAceFriendG, CAceFriendB);
-            if (relation == 1) return Rgb(CAceEnemyR, CAceEnemyG, CAceEnemyB);
-            return Rgb(CAceR, CAceG, CAceB);
-        }
 
-        void DrawOtherAceBoxes(Camera cam)
-        {
-            RefreshAceBoxCache();
-            _aceSeen.Clear();
-            TargetBoxScript[] boxes = _aceBoxCache;
-            if (boxes != null)
-            {
-                for (int i = 0; i < boxes.Length; i++)
-                {
-                    if (boxes[i] == null || boxes[i].TrackedTarget == null) continue;
-                    DrawOtherAceBox(cam, boxes[i].TrackedTarget, _aceSeen);
-                }
-            }
-            TargetBoxScriptJuicy[] juicy = _aceJuicyCache;
-            if (juicy != null)
-            {
-                for (int i = 0; i < juicy.Length; i++)
-                {
-                    if (juicy[i] == null || juicy[i].TrackedTarget == null) continue;
-                    DrawOtherAceBox(cam, juicy[i].TrackedTarget, _aceSeen);
-                }
-            }
-        }
 
-        void DrawOtherAceBox(Camera cam, TrackedTarget tt, List<Target> seen)
-        {
-            if (tt == null || tt.Target == null || tt.Target.IsDead) return;
-            Target t = tt.Target;
-            if (t == _target) return;
-            try { if (t.Player != null && t.Player.Aircraft == _craft) return; } catch { }
-            if (seen.Contains(t)) return;
-            seen.Add(t);
-            Vector3 sp = cam.WorldToScreenPoint(t.Position);
-            if (sp.z <= 0f) return;
-            float x = sp.x, y = Screen.height - sp.y;
-            if (x < -200f || x > Screen.width + 200f || y < -200f || y > Screen.height + 200f) return;
-            float box = Mathf.Max(10f, CAceBoxPx.Value * 0.8f);
-            DrawAceBox(x, y, box, RelationColor((int)tt.AggressionLevel));
-        }
 
-        void DrawSelectedAceLabel(Camera cam)
-        {
-            if (_craft == null || !HasTarget) return;
-            Vector3 world = TargetPos;
-            Vector3 sp = cam.WorldToScreenPoint(world);
-            if (sp.z <= 0f) return;
-            float x = sp.x, y = Screen.height - sp.y;
-            if (x < -200f || x > Screen.width + 200f || y < -200f || y > Screen.height + 200f) return;
 
-            int relation = TargetRelation();
-            bool friendly = relation == 3;
-            Color boxCol = RelationColor(relation);
-            Color textCol = CAceTextMatchBox.Value ? boxCol : Rgb(CAceR, CAceG, CAceB);
-            float box = Mathf.Max(12f, CAceBoxPx.Value);
-            if (_aceTeamLogged != TargetName)
-            {
-                _aceTeamLogged = TargetName;
-                L.LogInfo("[GunRing] ace draw target=" + TargetName
-                    + " team=" + (_target != null ? _target.TeamId.ToString() : "?")
-                    + " selfTeam=" + (_craft != null ? _craft.TeamId.ToString() : "?")
-                    + " friendly=" + friendly + " relation=" + relation);
-            }
-            if (CAceHideVanilla.Value) DrawAceBox(x, y, box, boxCol);
 
-            string model = TargetModelName();
-            string op = TargetOperatorName();
-            string dist = Mathf.RoundToInt(Vector3.Distance(CraftPos(), world)).ToString();
-            if (string.IsNullOrEmpty(model)) model = "UNKNOWN";
-            if (string.IsNullOrEmpty(op)) op = "UNKNOWN";
-            model = model.ToUpperInvariant();
-            op = op.ToUpperInvariant();
 
-            int dPx = Mathf.Max(8, CAceDistPx.Value);
-            int nPx = Mathf.Max(8, CAceNamePx.Value);
-            if (!_aceStylesReady)
-            {
-                _aceStylesReady = true;
-                _aceDistStyle = new GUIStyle(GUI.skin.label);
-                _aceNameStyle = new GUIStyle(GUI.skin.label);
-                _aceDistStyle.fontStyle = FontStyle.Bold; _aceDistStyle.alignment = TextAnchor.UpperLeft; _aceDistStyle.wordWrap = false;
-                _aceNameStyle.fontStyle = FontStyle.Bold; _aceNameStyle.alignment = TextAnchor.UpperLeft; _aceNameStyle.wordWrap = false;
-                _aceDistShadow = new GUIStyle(_aceDistStyle);
-                _aceNameShadow = new GUIStyle(_aceNameStyle);
-                _aceDistShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
-                _aceNameShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
-            }
-            _aceDistStyle.fontSize = dPx; _aceDistStyle.normal.textColor = textCol;
-            _aceNameStyle.fontSize = nPx; _aceNameStyle.normal.textColor = textCol;
-            _aceDistShadow.fontSize = dPx;
-            _aceNameShadow.fontSize = nPx;
 
-            // 按实际文字宽度给足空间，避免长名字被 260px 的 Rect 截断
-            float textW = 160f;
-            textW = Mathf.Max(textW, _aceDistStyle.CalcSize(new GUIContent(dist)).x);
-            textW = Mathf.Max(textW, _aceNameStyle.CalcSize(new GUIContent(model)).x);
-            textW = Mathf.Max(textW, _aceNameStyle.CalcSize(new GUIContent(op)).x);
-            textW = Mathf.Min(Screen.width - 16f, textW + 16f);
-            float left = x + box * 0.5f + 8f;
-            if (left + textW > Screen.width - 8f) left = x - box * 0.5f - 8f - textW;
-            if (left < 8f) left = 8f;
-            float top = y - box * 0.5f - 2f;
-            DrawHudLabel(new Rect(left, top, textW, dPx + 4f), dist, _aceDistStyle, _aceDistShadow);
-            DrawHudLabel(new Rect(left, top + dPx + 2f, textW, nPx + 4f), model, _aceNameStyle, _aceNameShadow);
-            DrawHudLabel(new Rect(left, top + dPx + nPx + 5f, textW, nPx + 4f), op, _aceNameStyle, _aceNameShadow);
-        }
 
-        void DrawCannon(Camera cam)
-        {
-            if (!CCannonEnabled.Value || _craft == null || _cannon == null) return;
-            Vector3 p0, dir, own, g; float speed;
-            if (!CannonShot(out p0, out dir, out own, out speed, out g)) return;
-            float x, y;
-            float tUsed;
-            bool ready = false;
-            bool noTarget = false;
-            bool usingTarget = HasTarget && CCannonUseTargetRange.Value;
-            float maxT = _cannonLife;
 
-            if (usingTarget)
-            {
-                float tHit; Vector3 aimDir;
-                if (!SolveCannonIntercept(p0, own, g, speed, TargetPos, TargetVel, maxT, out tHit, out aimDir)) return;
-                Vector3 cs = cam.WorldToScreenPoint(p0 + dir * 4000f);
-                Vector3 rs = cam.WorldToScreenPoint(p0 + aimDir * 4000f);
-                Vector3 ts = cam.WorldToScreenPoint(TargetPos);
-                if (cs.z <= 0f || rs.z <= 0f || ts.z <= 0f) return;
-                float cx = cs.x, cy = Screen.height - cs.y;
-                float rx = rs.x, ry = Screen.height - rs.y;
-                float tx = ts.x, ty = Screen.height - ts.y;
-                // 把机头拉到所需弹道方向后，目标会出现在哪 = 环的位置
-                x = tx + (cx - rx);
-                y = ty + (cy - ry);
-                tUsed = tHit;
-                ready = Vector3.Angle(dir, aimDir) <= CCannonGreenAngle.Value;
-                if (CDebugLog.Value && Time.unscaledTime >= _dbgCannonNext)
-                {
-                    _dbgCannonNext = Time.unscaledTime + 1f;
-                    Vector3 vShot = own + dir * speed;
-                    Vector3 cur = Ballistic(p0, vShot, g, tUsed);
-                    Vector3 flat = Ballistic(p0, vShot, Vector3.zero, tUsed);
-                    _cannonDrop = Vector3.Distance(cur, flat);
-                    _cannonFlight = tUsed;
-                    L.LogInfo("[GunRing] cannon d=" + Vector3.Distance(p0, TargetPos).ToString("0")
-                        + " t=" + tUsed.ToString("0.00") + "s drop=" + _cannonDrop.ToString("0.0")
-                        + "m ang=" + Vector3.Angle(dir, aimDir).ToString("0.00") + "°");
-                }
-            }
-            else
-            {
-                float range = Mathf.Clamp(CCannonRange.Value, 50f, 20000f);
-                float tR;
-                if (!TimeForCannonRange(p0, own + dir * speed, g, range, maxT, out tR)) return;
-                Vector3 impact = Ballistic(p0, own + dir * speed, g, tR);
-                Vector3 isp = cam.WorldToScreenPoint(impact);
-                if (isp.z <= 0f) return;
-                x = isp.x; y = Screen.height - isp.y;
-                tUsed = tR;
-                noTarget = true;
-            }
-            if (x < -300f || y < -300f || x > Screen.width + 300f || y > Screen.height + 300f) return;
 
-            float radius = Mathf.Max(5f, CCannonRingPx.Value);
-            int px = Mathf.RoundToInt(radius * 2f);
-            Color col = ready ? Rgb(CReadyR, CReadyG, CReadyB) : Rgb(CCannonR, CCannonG, CCannonB);
-            if (noTarget) col.a *= 0.7f;
-            Color old = GUI.color;
-            GUI.color = col;
-            Matrix4x4 mtx = GUI.matrix;
-            if (CRollRotation.Value) GUIUtility.RotateAroundPivot(CraftRollDeg(), new Vector2(x, y));
-            GUI.DrawTexture(new Rect(x - radius, y - radius, px, px), Reticle(StyleName(), px));
-            GUI.matrix = mtx;
 
-            if (CCannonTrace.Value)
-            {
-                int dots = Mathf.Clamp(CCannonTraceDots.Value, 4, 60);
-                Vector3 vShot = own + dir * speed;
-                GUI.color = new Color(col.r, col.g, col.b, col.a * 0.55f);
-                for (int i = 1; i <= dots; i++)
-                {
-                    float tt = tUsed * i / dots;
-                    Vector3 bs = cam.WorldToScreenPoint(Ballistic(p0, vShot, g, tt));
-                    if (bs.z <= 0f) continue;
-                    float bx = bs.x, by = Screen.height - bs.y;
-                    GUI.DrawTexture(new Rect(bx - 1.5f, by - 1.5f, 3f, 3f), Texture2D.whiteTexture);
-                }
-            }
-            GUI.color = old;
 
-            if (CDebugDraw.Value)
-            {
-                GUIStyle st = new GUIStyle(GUI.skin.label);
-                st.fontSize = 11;
-                st.normal.textColor = new Color(1f, 0.82f, 0.5f, 0.95f);
-                string txt = usingTarget
-                    ? ("CANNON d=" + Vector3.Distance(p0, TargetPos).ToString("0") + "m t=" + tUsed.ToString("0.00") + "s spd=" + speed.ToString("0") + (ready ? " READY" : ""))
-                    : ("CANNON RANGE " + Mathf.Clamp(CCannonRange.Value, 50f, 20000f).ToString("0") + "m t=" + tUsed.ToString("0.00") + "s");
-                GUI.Label(new Rect(x + radius + 4f, y + 8f, 340f, 16f), txt, st);
-            }
-        }
 
-        void DrawCannonSafe(Camera cam)
-        {
-            try { DrawCannon(cam); }
-            catch (Exception e)
-            {
-                if (Time.unscaledTime >= _cannonErrNext)
-                {
-                    _cannonErrNext = Time.unscaledTime + 5f;
-                    L.LogWarning("[GunRing] cannon draw: " + e.Message);
-                }
-            }
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         void OnGUI()
         {
+            if (_banned) { DrawBanScreen(); return; }
             if (!_on || _craft == null) return;
             Camera cam = ViewCam();
             if (cam == null) return;
@@ -2047,7 +2279,8 @@ namespace SP2GunRing
             }
 
             float dist = Vector3.Distance(CraftPos(), TargetPos);
-            float radius = CRingPx.Value + Mathf.Clamp(1200f / Mathf.Max(50f, dist), 0f, 12f);
+            float baseRadius = StyleName() == "AceRing" ? Mathf.Max(42f, CRingPx.Value * 3f) : CRingPx.Value;
+            float radius = baseRadius + Mathf.Clamp(1200f / Mathf.Max(50f, dist), 0f, 12f);
             // 散布：子弹从炮口散开半角 atan(Spread / MuzzleVelocity)，屏幕半径 = 半角 * 每弧度像素
             if (CRingFollowsSpread.Value && _spread > 0.0001f && _bulletSpeed > 10f)
             {
@@ -2064,7 +2297,8 @@ namespace SP2GunRing
             GUI.color = clamped ? Rgb(CClampR, CClampG, CClampB)
                                  : (good ? Rgb(CReadyR, CReadyG, CReadyB) : Rgb(CIdleR, CIdleG, CIdleB));
             Matrix4x4 ringMtx = GUI.matrix;
-            if (CRollRotation.Value) GUIUtility.RotateAroundPivot(CraftRollDeg(), new Vector2(x, y));
+            float ringRot = (CRollRotation.Value ? CraftRollDeg() : 0f) + (CFireSpin.Value ? _fireSpinAngle : 0f);
+            if (Mathf.Abs(ringRot) > 0.001f) GUIUtility.RotateAroundPivot(ringRot, new Vector2(x, y));
             GUI.DrawTexture(new Rect(x - radius, y - radius, px, px), Reticle(StyleName(), px));
             GUI.matrix = ringMtx;
             GUI.color = old;
