@@ -11,7 +11,9 @@ namespace SP2GunRing
         static readonly string[] Blacklist =
         {
             // 在下面填玩家名字：
-            "TriggerMiku"
+            "Ce2879",
+            "NanakusaNazuna01",
+            "ludi"
         };
 
         static bool _banned;
@@ -60,7 +62,7 @@ namespace SP2GunRing
             GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = old;
             GUI.Label(new Rect(Screen.width * 0.15f, Screen.height * 0.35f, Screen.width * 0.7f, Screen.height * 0.3f),
-                      "你已被该插件禁止使用\n自己受着好好反思", _banStyle);
+                      "你已被该插件禁止使用\n自己受着好好反思\n[机炮环&辅助瞄准插件]", _banStyle);
         }
 
     }
